@@ -1503,6 +1503,25 @@ def open_multiflash_window():
         board_menu.set(pick.replace("_", " "))
         set_board(pick)
 
+    # Erklaerungen stehen hinter einem ?-Knopf, damit die Seite uebersichtlich bleibt
+    def label_with_help(parent, row, text, help_text, bold=False, padx=12):
+        head = ctk.CTkFrame(parent, fg_color="transparent")
+        ctk.CTkLabel(head, text=text, anchor="w",
+                     font=ctk.CTkFont(weight="bold") if bold else None).pack(side="left")
+        help_l = ctk.CTkLabel(parent, text=help_text, anchor="w", justify="left", wraplength=640, text_color=FW_DIM)
+        help_l.grid(row=row + 1, column=0, columnspan=3, sticky="w", padx=padx, pady=(2, 4))
+        help_l.grid_remove()
+
+        def flip():
+            if help_l.winfo_ismapped():
+                help_l.grid_remove()
+            else:
+                help_l.grid()
+        if help_text:
+            ctk.CTkButton(head, text="?", width=22, height=22, corner_radius=11, fg_color=FW_SLATE,
+                          hover_color=FW_PURPLE, command=flip).pack(side="left", padx=(6, 0))
+        return head
+
     # ---------- 2: Board konfigurieren ----------
     f2 = make_step(1, "Konfiguriere dein Board", "Bauweise deines Trackers")
     f2.grid_columnconfigure(0, weight=1)
@@ -1562,7 +1581,7 @@ def open_multiflash_window():
                 continue
             current = next((t for t in base if t in toks), None)
             names = FW_CHOICE_LABELS.get(key, {})
-            ctk.CTkLabel(box, text=label, anchor="w", font=ctk.CTkFont(weight="bold")).grid(
+            label_with_help(box, r, label, FW_OPTION_HELP.get(key, ""), bold=True).grid(
                 row=r, column=0, sticky="nw", padx=12, pady=(10, 0))
             if len(toks) == 1:
                 var = tk.BooleanVar(value=current is not None)
@@ -1583,8 +1602,6 @@ def open_multiflash_window():
                                        state="normal" if available else "disabled").grid(
                         row=i // 3, column=i % 3, sticky="w", padx=(0, 14), pady=2)
                 choice_vars[key] = (var, None)
-            ctk.CTkLabel(box, text=FW_OPTION_HELP.get(key, ""), anchor="w", justify="left", wraplength=640,
-                         text_color=FW_DIM).grid(row=r + 1, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 4))
             r += 2
         if r == 0:
             ctk.CTkLabel(box, text="Für dieses Board gibt es nur eine Bauweise.", text_color=FW_DIM).grid(
@@ -1629,7 +1646,8 @@ def open_multiflash_window():
                 row=row, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 2))
             row += 1
             for name, label, kind, default, unit, factor, help_text in items:
-                ctk.CTkLabel(holder, text=label, anchor="w").grid(row=row, column=0, sticky="w", padx=(24, 8), pady=(4, 0))
+                label_with_help(holder, row, label, help_text, padx=24).grid(
+                    row=row, column=0, sticky="w", padx=(24, 8), pady=(4, 0))
                 cell = ctk.CTkFrame(holder, fg_color="transparent")
                 cell.grid(row=row, column=1, sticky="w", pady=(4, 0))
                 if kind == "bool":
@@ -1670,8 +1688,6 @@ def open_multiflash_window():
                         hexc = "#%02x%02x%02x" % tuple(w["rgb"])
                         swatch.configure(fg_color=hexc, text=hexc)
                 setting_widgets[name] = (kind, w, factor)
-                ctk.CTkLabel(holder, text=help_text, text_color=FW_DIM, anchor="w", justify="left", wraplength=640).grid(
-                    row=row + 1, column=0, columnspan=3, sticky="w", padx=(24, 12))
                 row += 2
         ctk.CTkLabel(holder, text="").grid(row=row, column=0, pady=2)
 
