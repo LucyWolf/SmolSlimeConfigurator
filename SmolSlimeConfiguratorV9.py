@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1238,7 +1238,8 @@ FW_OPTION_HELP = {
              "hält deutlich kürzer. Sinnvoll, wenn dein Sensor das Aufwecken durch Bewegung nicht kann.",
     "sw0": "Nur für einen Taster (drücken, federt zurück) zwischen Pin P1.00 und GND. Damit kannst du koppeln "
            "(5 Sekunden halten), ausschalten und aufwecken. Ein Ein/Aus-Schiebeschalter zwischen Akku und Board "
-           "ist kein SW0 – dafür nicht anhaken. Ein Taster am RST-Pin funktioniert auch ohne diese Option.",
+           "ist kein SW0 – dafür nicht anhaken. Ein Taster am RST-Pin funktioniert auch ohne diese Option. "
+           "Beim Stacked Smol ist der Taster fest eingebaut (P0.06) und immer an.",
     "tdma": "Neuerer Funkmodus mit festen Zeitfenstern pro Tracker – kann bei vielen Trackern stabiler sein. "
             "Achtung: Der Dongle braucht dann ebenfalls TDMA-Firmware, sonst verbinden sie sich nicht.",
     "data": "Gibt zusätzlich Rohdaten über USB aus. Nur für Fehlersuche oder Entwicklung.",
@@ -1375,7 +1376,8 @@ def parse_fw_name(name):
         "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() != "nosleepclk"
                           and not t.startswith("StackedSmol_"))
                  or ("ProMicro" if any(t.lower().startswith("stackedsmol") for t in rest) else "Standard"),
-        "options": frozenset(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES)
+        "options": (frozenset({"SW0"}) if any(t.lower().startswith("stackedsmol") for t in rest) else frozenset())
+                   | frozenset(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES)
                    | frozenset(t for t in rest if t.startswith("StackedSmol_"))
                    | (frozenset({"NoSleep", "CLK"}) if any(t.lower() == "nosleepclk" for t in rest) else frozenset()),
         "ext": ext,
@@ -1676,6 +1678,7 @@ def open_multiflash_window():
                                      sorted(o)))
         fixed = frozenset.intersection(*sets)
         choice_vars = {}
+        box_widgets = {}
 
         box = ctk.CTkFrame(f2, fg_color=FW_CARD, corner_radius=10)
         box.grid(row=0, column=0, sticky="ew", padx=6)
@@ -1718,6 +1721,14 @@ def open_multiflash_window():
         nxt = nav(f2, 3, next_cmd=lambda: go(2))
 
         def update_result():
+            # Der Stacked Smol hat den Taster fest verbaut: SW0 dann an und nicht abwaehlbar
+            if "sw0" in choice_vars and "sw0" in box_widgets:
+                variant = choice_vars.get("variant", (tk.StringVar(), None))[0].get() or ""
+                stacked = variant.startswith("StackedSmol")
+                if stacked:
+                    choice_vars["sw0"][0].set(True)
+                box_widgets["sw0"].configure(state="disabled" if stacked else "normal",
+                                             text="An – beim Stacked Smol eingebaut (P0.06)" if stacked else "An")
             chosen = set(fixed)
             for var, tok in choice_vars.values():
                 if tok and var.get():
@@ -1764,8 +1775,8 @@ def open_multiflash_window():
                 row=r, column=0, sticky="nw", padx=12, pady=(10, 0))
             if len(toks) == 1:
                 var = tk.BooleanVar(value=current is not None)
-                ctk.CTkCheckBox(box, text="An", variable=var, command=update_result).grid(
-                    row=r, column=1, sticky="w", pady=(10, 0))
+                box_widgets[key] = ctk.CTkCheckBox(box, text="An", variable=var, command=update_result)
+                box_widgets[key].grid(row=r, column=1, sticky="w", pady=(10, 0))
                 choice_vars[key] = (var, toks[0])
             else:
                 var = tk.StringVar(value=current or "")
