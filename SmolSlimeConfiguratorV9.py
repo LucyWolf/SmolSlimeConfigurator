@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.17"
+APP_VERSION = "1.0.18"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1205,7 +1205,7 @@ FW_SOURCES = [
 ]
 
 FW_OPTION_GROUPS = [
-    ("variant", "Bauform", ["StackedSmol", "Chrysalis", "Bao"]),
+    ("variant", "Bauform", ["StackedSmol", "Chrysalis"]),
     ("bus", "Sensor-Anschluss", ["SPI", "I2C"]),
     ("pins", "smSPI-Belegung", ["SmolPins"]),
     ("mag", "Magnetometer", ["Mag"]),
@@ -1221,7 +1221,7 @@ FW_OPTION_TOKENS = {t for _, _, toks in FW_OPTION_GROUPS for t in toks}
 # Firmware und das Build-Skript der CI (was jede Option beim Bauen umschaltet).
 FW_OPTION_HELP = {
     "variant": "Wie der Tracker um den Controller herum aufgebaut ist. „Stacked Smol“: der Sensor sitzt huckepack "
-               "direkt auf dem ProMicro. Chrysalis und Bao sind fertige Tracker-Platinen. „Normaler ProMicro“: keine "
+               "direkt auf dem ProMicro. Chrysalis ist eine fertige Tracker-Platine (SPI, mit Taster). „Normaler ProMicro“: keine "
                "besondere Platine, Sensor und ProMicro sind z. B. mit Kabeln verbunden.",
     "bus": "Wie der Bewegungssensor mit dem Controller verbunden ist. SPI ist schneller und weniger störanfällig "
            "und wird deshalb empfohlen. I2C braucht weniger Drähte und funktioniert auch. Wichtig: Die Wahl muss "
@@ -1242,7 +1242,7 @@ FW_OPTION_HELP = {
     "sw0": "Nur für einen Taster (drücken, federt zurück) zwischen Pin P1.00 und GND. Damit kannst du koppeln "
            "(5 Sekunden halten), ausschalten und aufwecken. Ein Ein/Aus-Schiebeschalter zwischen Akku und Board "
            "ist kein SW0 – dafür nicht anhaken. Ein Taster am RST-Pin funktioniert auch ohne diese Option. "
-           "Beim Stacked Smol ist der Taster fest eingebaut (P0.06) und immer an.",
+           "Beim Stacked Smol (P0.06) und beim Chrysalis ist der Taster fest eingebaut und immer an.",
     "tdma": "Neuerer Funkmodus mit festen Zeitfenstern pro Tracker – kann bei vielen Trackern stabiler sein. "
             "Achtung: Der Dongle braucht dann ebenfalls TDMA-Firmware, sonst verbinden sie sich nicht.",
     "data": "Gibt zusätzlich Rohdaten über USB aus. Nur für Fehlersuche oder Entwicklung.",
@@ -1376,7 +1376,8 @@ def parse_fw_name(name):
     opts = set(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES)
     if any(t.lower() == "nosleepclk" for t in rest):
         opts |= {"NoSleep", "CLK"}
-    if any(t.lower().startswith("stackedsmol") for t in rest):
+    # Stacked Smol und Chrysalis haben den Taster fest eingebaut (SW0 ist in ihrem Board immer an)
+    if any(t.lower().startswith(("stackedsmol", "chrysalis")) for t in rest):
         opts.add("SW0")
     # Sensor-Takt gibt es nur an/aus. Ohne Angabe ist er beim Stacked Smol und bei Chrysalis an (ihr Board
     # legt die Leitung fest), beim normalen ProMicro aus. Danach steht "CLK" genau dann drin, wenn er an ist.
@@ -1385,14 +1386,14 @@ def parse_fw_name(name):
     opts -= {"CLK", "NoCLK"}
     if clk_on:
         opts.add("CLK")
-    # Sensor-Anschluss nur SPI oder I2C. Ohne Angabe ist der ProMicro (auch Chrysalis) I2C, Bao ist SPI;
+    # Sensor-Anschluss nur SPI oder I2C. Ohne Angabe ist der ProMicro I2C, Chrysalis und Bao sind SPI;
     # smSPI ist SPI mit anderer Pinbelegung. Unbekannt bleibt es nur bei den Stacked-Smol-Sondervarianten.
     if "smSPI" in opts:
         opts -= {"smSPI"}
         opts |= {"SPI", "SmolPins"}
     elif not opts & {"SPI", "I2C"} and any(t.lower() == "promicro" for t in rest) \
             and not any(t.startswith("StackedSmol_") for t in rest):
-        opts.add("SPI" if any(t.lower() == "bao" for t in rest) else "I2C")
+        opts.add("SPI" if any(t.lower() in ("bao", "chrysalis") for t in rest) else "I2C")
     # Schlafmodus ebenso als an/aus: "NoSleep" im Namen heisst aus, sonst an
     if "NoSleep" in opts:
         opts.discard("NoSleep")
@@ -1438,6 +1439,9 @@ def fetch_releases(repo):
             # Die offizielle CI laedt zusaetzlich Builds aus jitingcns Code hoch (..._JitingCat). Wer eine
             # Quelle waehlt, bekommt nur deren eigene Firmware; jitingcn hat eine eigene Quelle.
             if "jitingcat" in a.get("name", "").lower():
+                continue
+            # Bao steht nicht in der SlimeVR-Doku (die CI baut es aus einem Zusatz-Repo)
+            if re.search(r"(^|_)Bao(_|\.)", a.get("name", "")):
                 continue
             info = parse_fw_name(a.get("name", ""))
             if info:
@@ -1771,14 +1775,16 @@ def open_multiflash_window():
         nxt = nav(f2, 3, next_cmd=lambda: go(2))
 
         def update_result():
-            # Der Stacked Smol hat den Taster fest verbaut: SW0 dann an und nicht abwaehlbar
+            # Stacked Smol und Chrysalis haben den Taster fest verbaut: SW0 dann an und nicht abwaehlbar
             if "sw0" in choice_vars and "sw0" in box_widgets:
                 variant = choice_vars.get("variant", (tk.StringVar(), None))[0].get() or ""
-                stacked = variant.startswith("StackedSmol")
-                if stacked:
+                fixed_btn = variant.startswith(("StackedSmol", "Chrysalis"))
+                if fixed_btn:
                     choice_vars["sw0"][0].set(True)
-                box_widgets["sw0"].configure(state="disabled" if stacked else "normal",
-                                             text="An – beim Stacked Smol eingebaut (P0.06)" if stacked else "An")
+                box_widgets["sw0"].configure(
+                    state="disabled" if fixed_btn else "normal",
+                    text=("An – beim Stacked Smol eingebaut (P0.06)" if variant.startswith("StackedSmol")
+                          else "An – beim Chrysalis eingebaut" if fixed_btn else "An"))
             chosen = set(fixed)
             for var, tok in choice_vars.values():
                 if tok and var.get():
