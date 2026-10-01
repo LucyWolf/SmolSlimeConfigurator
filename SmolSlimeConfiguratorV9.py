@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1221,8 +1221,8 @@ FW_OPTION_TOKENS = {t for _, _, toks in FW_OPTION_GROUPS for t in toks}
 # Firmware und das Build-Skript der CI (was jede Option beim Bauen umschaltet).
 FW_OPTION_HELP = {
     "variant": "Wie der Tracker um den Controller herum aufgebaut ist. „Stacked Smol“: der Sensor sitzt huckepack "
-               "direkt auf dem ProMicro. Chrysalis und Bao sind fertige Tracker-Platinen. Hast du einen ProMicro "
-               "selbst mit Kabeln verdrahtet: „Platinen-Standard“.",
+               "direkt auf dem ProMicro. Chrysalis und Bao sind fertige Tracker-Platinen. „Eigene Verdrahtung“: du "
+               "hast Sensor und ProMicro selbst mit Kabeln verbunden.",
     "bus": "Wie der Bewegungssensor mit dem Controller verbunden ist. SPI ist schneller und weniger störanfällig "
            "und wird deshalb empfohlen. I2C braucht weniger Drähte und funktioniert auch. Wichtig: Die Wahl muss "
            "zu deiner Verdrahtung passen, sonst wird der Sensor nicht gefunden.",
@@ -1250,7 +1250,7 @@ FW_OPTION_HELP = {
 
 FW_CHOICE_LABELS = {
     "bus": {"SPI": "SPI (empfohlen)", "I2C": "I2C"},
-    "variant": {"StackedSmol": "Stacked Smol", None: "Platinen-Standard"},
+    "variant": {"StackedSmol": "Stacked Smol", None: "Eigene Verdrahtung"},
 }
 
 # Laufzeit-Einstellungen der offiziellen Firmware (write_config <name> <wert>).
@@ -1421,16 +1421,28 @@ def fetch_releases(repo):
         return fw_release_cache[repo]
     response = requests.get(f"https://api.github.com/repos/{repo}/releases?per_page=20", timeout=15)
     response.raise_for_status()
+    rels = response.json()
+    # Das stabile Release (bei Shine-Bright-Meow der Tag "latest" mit allen Varianten) steht vorn.
+    # Es wurde frueh angelegt und taucht unter den neuesten Tages-Builds sonst gar nicht auf.
+    try:
+        stable = requests.get(f"https://api.github.com/repos/{repo}/releases/latest", timeout=15)
+        if stable.ok:
+            stable = stable.json()
+            rels = [stable] + [r for r in rels if r.get("id") != stable.get("id")]
+    except Exception:
+        pass
     releases = []
-    for rel in response.json():
+    for rel in rels:
         assets = []
         for a in rel.get("assets", []):
             info = parse_fw_name(a.get("name", ""))
             if info:
                 info["url"] = a.get("browser_download_url")
+                info["date"] = (a.get("updated_at") or "")[:10]
                 assets.append(info)
         if assets:
-            releases.append({"tag": rel.get("tag_name", "?"), "assets": assets})
+            releases.append({"tag": rel.get("tag_name", "?"), "assets": assets,
+                             "stable": not rel.get("prerelease", False)})
     fw_release_cache[repo] = releases
     return releases
 
@@ -1656,7 +1668,7 @@ def open_multiflash_window():
             return
         ver_map.clear()
         for k, rel in enumerate(rels):
-            ver_map[rel["tag"] + ("  (neueste)" if k == 0 and src["repo"] != "*" else "")] = rel
+            ver_map[rel["tag"] + ("  (stabil)" if rel.get("stable") and src["repo"] != "*" else "")] = rel
         labels = list(ver_map)
         ver_menu.configure(values=labels, state="normal")
         ver_menu.set(labels[0])
@@ -1778,7 +1790,8 @@ def open_multiflash_window():
             st["asset"] = match[0] if match else None
             if match:
                 a = match[0]
-                result.configure(text=f"✅  {a['name']}\n      Quelle: {a['src']['owner']} / {a['src']['name']} · {a['tag']}",
+                date = f" · Datei vom {a['date'][8:10]}.{a['date'][5:7]}.{a['date'][:4]}" if a.get("date") else ""
+                result.configure(text=f"✅  {a['name']}\n      Quelle: {a['src']['owner']} / {a['src']['name']} · {a['tag']}{date}",
                                  text_color=("green", "lime"))
                 nxt.configure(state="normal")
             else:
