@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -488,7 +488,12 @@ def device_lost(dev, msg):
     refresh_sidebar()
     sync_active()
 
+# "Entfernen" gilt, bis das Geraet abgesteckt wird; sonst kaeme es nach 2 s automatisch zurueck
+ignored_keys = set()
+perm_state = {"asked": False}
+
 def remove_device(dev):
+    ignored_keys.add(dev.key)
     disconnect_device(dev)
     devices.remove(dev)
     dev.button.destroy()
@@ -535,9 +540,27 @@ def rename_device(dev):
 
 # Getrennte Geraete wieder verbinden (nach Neustart, Flash, Umstecken) und
 # den festgelegten Dongle von selbst dazuholen.
+def port_key(p):
+    return p.serial_number or (p.location or "").split(":")[0] or p.device
+
 def watch_devices():
     try:
         ports = serial.tools.list_ports.comports()
+        ignored_keys.intersection_update({port_key(p) for p in ports})  # abgesteckt -> wieder erkennen
+        # Neu angesteckte SlimeNRF-Geraete (USB-Hersteller 1209: Dongle und Tracker) selbst
+        # aufnehmen und verbinden. Der UF2-Bootloader beim Flashen hat eine andere Kennung.
+        for p in ports:
+            if p.vid != 0x1209 or port_key(p) in ignored_keys or any(d.matches(p) for d in devices):
+                continue
+            dev = get_or_add_device(p)
+            # Nach den USB-Rechten nur einmal pro Sitzung fragen, nicht bei jedem Einstecken
+            ok = connect_device(dev, ask=not perm_state["asked"], quiet=True)
+            if not ok and dev.last_error is not None and is_permission_error(dev.last_error):
+                perm_state["asked"] = True
+                append_text(f"{device_name(dev)}: keine Berechtigung für {dev.port}. Über „Connect“ einrichten.\n",
+                            "error", dev)
+            if ok and active_device is None:
+                select_device(dev)
         dongle = settings.get("dongle_serial")
         if dongle and not any(d.serial_number == dongle for d in devices):
             info = next((p for p in ports if p.serial_number == dongle), None)
