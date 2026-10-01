@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.20"
+APP_VERSION = "1.0.21"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1770,6 +1770,7 @@ def open_multiflash_window():
         fixed = frozenset.intersection(*sets)
         choice_vars = {}
         box_widgets = {}
+        radio_widgets = {}   # key -> [(Radioknopf, in dieser Quelle vorhanden)]
 
         box = ctk.CTkFrame(f2, fg_color=FW_CARD, corner_radius=10)
         box.grid(row=0, column=0, sticky="ew", padx=6)
@@ -1812,16 +1813,32 @@ def open_multiflash_window():
         nxt = nav(f2, 3, next_cmd=lambda: go(2))
 
         def update_result():
-            # Stacked Smol und Chrysalis haben den Taster fest verbaut: SW0 dann an und nicht abwaehlbar
-            if "sw0" in choice_vars and "sw0" in box_widgets:
-                variant = choice_vars.get("variant", (tk.StringVar(), None))[0].get() or ""
-                fixed_btn = variant.startswith(("StackedSmol", "Chrysalis"))
-                if fixed_btn:
-                    choice_vars["sw0"][0].set(True)
-                box_widgets["sw0"].configure(
-                    state="disabled" if fixed_btn else "normal",
-                    text=("An – beim Stacked Smol eingebaut (P0.06)" if variant.startswith("StackedSmol")
-                          else "An – beim Chrysalis eingebaut" if fixed_btn else "An"))
+            # Was bei der gewaehlten Bauform fest vorgegeben ist (Chrysalis: SPI, Takt, Taster; Stacked Smol:
+            # Taster), wird automatisch eingestellt und gesperrt - sonst landet man bei "gibt es nicht".
+            if "variant" in choice_vars:
+                variant = choice_vars["variant"][0].get() or None
+                vname = choice_text("variant", variant)
+                vsets = [o for o in sets if next((t for t in o if group_of(t)[0] == "variant"), None) == variant]
+                for key, (var, tok) in choice_vars.items():
+                    if key == "variant" or not vsets:
+                        continue
+                    vals = {next((t for t in o if group_of(t)[0] == key), None) for o in vsets}
+                    locked = len(vals) == 1
+                    if locked:
+                        v = next(iter(vals))
+                        var.set(v is not None) if tok else var.set(v or "")
+                    if tok and key in box_widgets:
+                        if not locked:
+                            text = "An"
+                        elif key == "sw0" and variant and variant.startswith("StackedSmol"):
+                            text = "An – beim Stacked Smol eingebaut (P0.06)"
+                        else:
+                            text = f"An – bei {vname} immer" if var.get() else f"Aus – gibt es bei {vname} nicht"
+                        box_widgets[key].configure(state="disabled" if locked else "normal", text=text)
+                    elif not tok:
+                        for rb, available in radio_widgets.get(key, []):
+                            rb.configure(state="normal" if available and (not locked or rb.cget("value") == var.get())
+                                         else "disabled")
             chosen = set(fixed)
             for var, tok in choice_vars.values():
                 if tok and var.get():
@@ -1896,9 +1913,10 @@ def open_multiflash_window():
                     available = t in choices
                     text = names.get(t) or (f"Stacked Smol ({t[12:]})" if t and t.startswith("StackedSmol_") else t)
                     text += "" if available else " – nicht in dieser Quelle"
-                    ctk.CTkRadioButton(fr, text=text, variable=var, value=t or "", command=update_result,
-                                       state="normal" if available else "disabled").grid(
-                        row=i // 3, column=i % 3, sticky="w", padx=(0, 14), pady=2)
+                    rb = ctk.CTkRadioButton(fr, text=text, variable=var, value=t or "", command=update_result,
+                                            state="normal" if available else "disabled")
+                    rb.grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 14), pady=2)
+                    radio_widgets.setdefault(key, []).append((rb, available))
                 choice_vars[key] = (var, None)
             r += 2
         if r == 0:
