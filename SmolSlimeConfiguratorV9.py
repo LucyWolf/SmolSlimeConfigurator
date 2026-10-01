@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1307,6 +1307,26 @@ FW_DIM = ("gray35", "gray65")
 
 fw_release_cache = {}
 
+# Erklaerungen stehen hinter einem ?-Knopf, damit die Seite uebersichtlich bleibt
+def label_with_help(parent, row, text, help_text, bold=False, padx=12):
+    head = ctk.CTkFrame(parent, fg_color="transparent")
+    ctk.CTkLabel(head, text=text, anchor="w",
+                 font=ctk.CTkFont(weight="bold") if bold else None).pack(side="left")
+    help_l = ctk.CTkLabel(parent, text=help_text, anchor="w", justify="left", wraplength=640, text_color=FW_DIM)
+    help_l.grid(row=row + 1, column=0, columnspan=3, sticky="w", padx=padx, pady=(2, 4))
+    help_l.grid_remove()
+
+    def flip():
+        if help_l.winfo_ismapped():
+            help_l.grid_remove()
+        else:
+            help_l.grid()
+    if help_text:
+        ctk.CTkButton(head, text="?", width=22, height=22, corner_radius=11, fg_color=FW_SLATE,
+                      hover_color=FW_PURPLE, command=flip).pack(side="left", padx=(6, 0))
+    return head
+
+
 # Zwei Namensschemata: SlimeNRF_Tracker_SPI_Mag_ProMicro (CI) und
 # SlimeNRF_ProMicro_StackedSmol_Tracker_I2C bzw. Aero_Tracker_Pro (jitingcn).
 # Bekannte Optionen werden herausgezogen, der Rest ist das Board.
@@ -1612,25 +1632,6 @@ def open_multiflash_window():
         board_menu.configure(values=list(board_map), state="normal")
         board_menu.set(pick.replace("_", " "))
         set_board(pick)
-
-    # Erklaerungen stehen hinter einem ?-Knopf, damit die Seite uebersichtlich bleibt
-    def label_with_help(parent, row, text, help_text, bold=False, padx=12):
-        head = ctk.CTkFrame(parent, fg_color="transparent")
-        ctk.CTkLabel(head, text=text, anchor="w",
-                     font=ctk.CTkFont(weight="bold") if bold else None).pack(side="left")
-        help_l = ctk.CTkLabel(parent, text=help_text, anchor="w", justify="left", wraplength=640, text_color=FW_DIM)
-        help_l.grid(row=row + 1, column=0, columnspan=3, sticky="w", padx=padx, pady=(2, 4))
-        help_l.grid_remove()
-
-        def flip():
-            if help_l.winfo_ismapped():
-                help_l.grid_remove()
-            else:
-                help_l.grid()
-        if help_text:
-            ctk.CTkButton(head, text="?", width=22, height=22, corner_radius=11, fg_color=FW_SLATE,
-                          hover_color=FW_PURPLE, command=flip).pack(side="left", padx=(6, 0))
-        return head
 
     # ---------- 2: Board konfigurieren ----------
     f2 = make_step(1, "Konfiguriere dein Board", "Bauweise deines Trackers")
@@ -2223,6 +2224,362 @@ def open_multiflash_window():
     src_id = settings.get("fw_last", {}).get("tracker", {}).get("source", "main")
     select_source(next((s for s in fw_sources() if s["id"] == src_id), fw_sources()[0]))
 
+# ---------- Geraeteverwaltung ----------
+# Uebersicht ueber alle bekannten Geraete. Firmware, Board, Sensor, Akku und Kopplung
+# kommen aus der Antwort auf "info"; Einstellungen werden per read_config/write_config
+# gelesen und geschrieben, ohne neu zu flashen.
+dev_win = None
+dev_details = {}   # dev.key -> {"fw", "board", "imu", "battery", "paired"}
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# Schickt Befehle und sammelt die Antwortzeilen. Nur aus einem Hintergrund-Thread aufrufen.
+def query_device(dev, cmds, wait=1.5):
+    lines = []
+    dev.listeners.append(lines.append)
+    try:
+        for c in cmds:
+            app.after(0, lambda c=c: send_command(c, dev))
+            time.sleep(0.2)
+        time.sleep(wait)
+    finally:
+        dev.listeners.remove(lines.append)
+    return [ANSI_RE.sub("", line).strip() for line in lines]
+
+def parse_info(lines):
+    d = {}
+    for line in lines:
+        m = re.match(r"^(SlimeVR-\S+)\s+(\S+)", line)
+        if m:
+            d["fw"] = f"{m.group(1)} {m.group(2)}"
+        for key, label in (("board", "Board"), ("imu", "IMU"), ("paired", "Tracker ID")):
+            if line.startswith(label + ": "):
+                d[key] = line[len(label) + 2:]
+        m = re.match(r"^Battery: ([\d.]+)%", line)
+        if m:
+            d["battery"] = f"{float(m.group(1)):.0f} %"
+    return d
+
+def open_device_manager():
+    global dev_win
+    if dev_win is not None and dev_win.winfo_exists():
+        dev_win.focus()
+        return
+    win = ctk.CTkToplevel(app, fg_color=FW_BG)
+    dev_win = win
+    win.title("Geräteverwaltung")
+    win.geometry("1000x660")
+    win.transient(app)
+
+    head = ctk.CTkFrame(win, fg_color="transparent")
+    head.pack(fill="x", padx=20, pady=(16, 4))
+    ctk.CTkLabel(head, text="Geräteverwaltung", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+    ctk.CTkLabel(head, text="Alle Dongles und Tracker auf einen Blick", text_color=FW_DIM).pack(anchor="w")
+
+    bar = ctk.CTkFrame(win, fg_color="transparent")
+    bar.pack(fill="x", padx=16, pady=(8, 4))
+    listbox = ctk.CTkScrollableFrame(win, fg_color="transparent")
+    listbox.pack(fill="both", expand=True, padx=10, pady=4)
+    status = ctk.CTkLabel(win, text="", anchor="w", text_color=FW_DIM)
+    status.pack(fill="x", padx=20, pady=(0, 10))
+    state = {"sig": None}
+
+    def say(text, color=None):
+        status.configure(text=text, text_color=color or FW_DIM)
+
+    def connect_plugged():
+        asked = False
+        n = 0
+        for p in serial.tools.list_ports.comports():
+            if p.vid != 0x1209:   # pid.codes: SlimeNRF-Dongles und -Tracker
+                continue
+            dev = get_or_add_device(p)
+            dev.manual_off = False
+            if dev.connected or connect_device(dev, ask=not asked, parent=win):
+                n += 1
+            elif dev.last_error is not None and is_permission_error(dev.last_error):
+                asked = True
+        say(f"{n} Gerät(e) verbunden." if n else "Keine SlimeNRF-Geräte angesteckt.")
+        render(force=True)
+
+    def fetch_info(targets=None):
+        targets = [d for d in (targets or devices) if d.connected]
+        if not targets:
+            say("Kein Gerät verbunden.", "orange")
+            return
+        say("Frage Info und Akku ab…")
+
+        def work(dev):
+            dev_details.setdefault(dev.key, {}).update(parse_info(query_device(dev, ["info"])))
+        threads = [threading.Thread(target=work, args=(d,), daemon=True) for d in targets]
+        for t in threads:
+            t.start()
+
+        def wait():
+            for t in threads:
+                t.join()
+            app.after(0, lambda: (say(f"Info von {len(targets)} Gerät(en) aktualisiert."), render(force=True)))
+        threading.Thread(target=wait, daemon=True).start()
+
+    def show_paired():
+        dongle = next((d for d in devices if d.is_dongle and d.connected), None) \
+            or next((d for d in devices if d.is_receiver and d.connected), None)
+        if not dongle:
+            say("Kein Dongle verbunden.", "orange")
+            return
+        say("Frage den Dongle nach gekoppelten Trackern…")
+
+        def work():
+            lines = [l for l in query_device(dongle, ["list"]) if l and not l.startswith(">>>") and not l.startswith("[")]
+            app.after(0, lambda: show_lines("Gekoppelte Tracker", lines or ["Keine Antwort vom Dongle."]))
+        threading.Thread(target=work, daemon=True).start()
+
+    def show_lines(title, lines):
+        say("")
+        pop = ctk.CTkToplevel(win, fg_color=FW_BG)
+        pop.title(title)
+        pop.geometry("520x380")
+        pop.transient(win)
+        box = ctk.CTkTextbox(pop)
+        box.pack(fill="both", expand=True, padx=12, pady=12)
+        box.insert("end", "\n".join(lines))
+        box.configure(state="disabled")
+
+    for text, cmd, tip in (
+        ("Alle angesteckten verbinden", connect_plugged, "Verbindet alle angesteckten SlimeNRF-Geräte"),
+        ("Info + Akku abrufen", lambda: fetch_info(), "Fragt bei allen verbundenen Geräten „info“ ab"),
+        ("Gekoppelte Tracker", show_paired, "Fragt den Dongle mit „list“, welche Tracker er kennt"),
+    ):
+        b = ctk.CTkButton(bar, text=text, command=cmd)
+        b.pack(side="left", padx=4)
+        ToolTip(b, tip)
+    b = ctk.CTkButton(bar, text="🔗 Alle koppeln", command=pair_all, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
+                      text_color="white")
+    b.pack(side="right", padx=4)
+    ToolTip(b, "Dongle und alle verbundenen Tracker gleichzeitig in den Kopplungsmodus")
+
+    def render(force=False):
+        sig = tuple((d.key, d.connected, device_name(d), d.is_dongle, d.port) for d in devices) + \
+            tuple((k, tuple(sorted(v.items()))) for k, v in sorted(dev_details.items()))
+        if sig == state["sig"] and not force:
+            return
+        state["sig"] = sig
+        for w in listbox.winfo_children():
+            w.destroy()
+        if not devices:
+            ctk.CTkLabel(listbox, text="Noch keine Geräte. Stecke Dongle oder Tracker an und drücke "
+                                       "„Alle angesteckten verbinden“.", text_color=FW_DIM).pack(pady=30)
+            return
+        for dev in sorted(devices, key=lambda d: (not d.is_dongle, not d.is_receiver, d.number)):
+            card = ctk.CTkFrame(listbox, fg_color=FW_CARD, corner_radius=10)
+            card.pack(fill="x", padx=6, pady=4)
+            top = ctk.CTkFrame(card, fg_color="transparent")
+            top.pack(fill="x", padx=12, pady=(10, 0))
+            ctk.CTkLabel(top, text=device_name(dev), font=ctk.CTkFont(size=15, weight="bold")).pack(side="left")
+            kind = "Dongle" if dev.is_receiver else "Tracker"
+            ctk.CTkLabel(top, text=f" {kind} ", corner_radius=6, height=20, text_color="white",
+                         fg_color=FW_PURPLE if dev.is_receiver else FW_SLATE,
+                         font=ctk.CTkFont(size=11)).pack(side="left", padx=8)
+            ctk.CTkLabel(top, text="● verbunden" if dev.connected else "○ getrennt",
+                         text_color="green" if dev.connected else "gray55").pack(side="left", padx=4)
+
+            d = dev_details.get(dev.key, {})
+            facts = [f"Port: {dev.port}", f"Seriennummer: {dev.serial_number or '–'}"]
+            for key, label in (("fw", "Firmware"), ("board", "Board"), ("imu", "Sensor"), ("battery", "Akku")):
+                if d.get(key):
+                    facts.append(f"{label}: {d[key]}")
+            if "paired" in d and not dev.is_receiver:
+                facts.append("gekoppelt" if d["paired"] != "None" else "nicht gekoppelt")
+            ctk.CTkLabel(card, text="   ·   ".join(facts), text_color=FW_DIM, anchor="w", justify="left",
+                         wraplength=900).pack(fill="x", padx=12, pady=(2, 6))
+
+            row = ctk.CTkFrame(card, fg_color="transparent")
+            row.pack(fill="x", padx=8, pady=(0, 10))
+
+            def toggle(dev=dev):
+                if dev.connected:
+                    dev.manual_off = True
+                    device_lost(dev, "Getrennt.\n")
+                else:
+                    dev.manual_off = False
+                    connect_device(dev, parent=win)
+                render(force=True)
+            buttons = [
+                ("Trennen" if dev.connected else "Verbinden", toggle),
+                ("Umbenennen", lambda dev=dev: rename_device(dev)),
+            ]
+            if dev.is_dongle:
+                buttons.append(("Dongle aufheben", lambda: set_dongle(None)))
+            elif dev.serial_number and dev.is_receiver:
+                buttons.append(("Als Dongle festlegen", lambda dev=dev: set_dongle(dev)))
+            if dev.connected:
+                buttons.append(("Info abrufen", lambda dev=dev: fetch_info([dev])))
+                if not dev.is_receiver:
+                    buttons.append(("Einstellungen", lambda dev=dev: open_device_settings(dev, win)))
+            buttons.append(("Entfernen", lambda dev=dev: (remove_device(dev), render(force=True))))
+            for text, cmd in buttons:
+                ctk.CTkButton(row, text=text, width=110, command=cmd).pack(side="left", padx=4)
+
+    def tick():
+        if not win.winfo_exists():
+            return
+        render()
+        win.after(1500, tick)
+
+    tick()
+
+# Einstellungen eines Trackers lesen und aendern, ohne neu zu flashen
+def open_device_settings(dev, parent):
+    w = ctk.CTkToplevel(parent, fg_color=FW_BG)
+    w.title(f"Einstellungen – {device_name(dev)}")
+    w.geometry("860x700")
+    w.transient(parent)
+    head = ctk.CTkFrame(w, fg_color="transparent")
+    head.pack(fill="x", padx=20, pady=(16, 4))
+    ctk.CTkLabel(head, text=f"Einstellungen – {device_name(dev)}", font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w")
+    ctk.CTkLabel(head, text="Direkt im Tracker gespeichert, ohne neu zu flashen", text_color=FW_DIM).pack(anchor="w")
+    body = ctk.CTkScrollableFrame(w, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=10, pady=4)
+    status = ctk.CTkLabel(w, text="Lese Einstellungen…", anchor="w", text_color=FW_DIM)
+    status.pack(fill="x", padx=20)
+    bar = ctk.CTkFrame(w, fg_color="transparent")
+    bar.pack(fill="x", padx=16, pady=(4, 12))
+    widgets = {}
+    current = {}
+
+    def read(done_msg=None):
+        for c in body.winfo_children():
+            c.destroy()
+        status.configure(text="Lese Einstellungen…", text_color=FW_DIM)
+
+        def work():
+            values = {}
+            for line in query_device(dev, ["read_config all"], wait=2.0):
+                m = re.match(r"^Read config: (\w+)=(-?\d+)", line)
+                if m:
+                    values[m.group(1)] = int(m.group(2))
+            app.after(0, lambda: build(values, done_msg))
+        threading.Thread(target=work, daemon=True).start()
+
+    def build(values, done_msg=None):
+        current.clear()
+        current.update(values)
+        widgets.clear()
+        if not values:
+            status.configure(text="Keine Antwort auf „read_config“ – diese Firmware kennt keine Einstellungen "
+                                  "oder der Tracker ist nicht verbunden.", text_color="orange")
+            return
+        holder = ctk.CTkFrame(body, fg_color=FW_CARD, corner_radius=10)
+        holder.pack(fill="x", padx=6, pady=4)
+        row = 0
+        for group, items in FW_SETTINGS:
+            if not any(n in values or (k == "color" and "led_default_color_r" in values) for n, _, k, *_ in items):
+                continue  # Gruppe, die diese Firmware nicht kennt, gar nicht erst anzeigen
+            ctk.CTkLabel(holder, text=group, font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
+                row=row, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 2))
+            row += 1
+            for name, label, kind, default, unit, factor, help_text in items:
+                if kind == "color":
+                    if not all(f"led_default_color_{c}" in values for c in "rgb"):
+                        continue
+                elif name not in values:
+                    continue
+                label_with_help(holder, row, label, help_text, padx=24).grid(
+                    row=row, column=0, sticky="w", padx=(24, 8), pady=(4, 0))
+                cell = ctk.CTkFrame(holder, fg_color="transparent")
+                cell.grid(row=row, column=1, sticky="w", pady=(4, 0))
+                if kind == "bool":
+                    wdg = ctk.CTkSegmentedButton(cell, values=["An", "Aus"])
+                    wdg.set("An" if values[name] else "Aus")
+                    wdg.pack(side="left")
+                elif kind == "enum":
+                    wdg = ctk.CTkSegmentedButton(cell, values=list(factor.values()))
+                    wdg.set(factor.get(values[name], list(factor.values())[0]))
+                    wdg.pack(side="left")
+                elif kind == "int":
+                    wdg = ctk.CTkEntry(cell, width=100)
+                    shown = values[name] / factor
+                    wdg.insert(0, str(int(shown)) if float(shown).is_integer() else f"{shown:.2f}")
+                    wdg.pack(side="left")
+                    ctk.CTkLabel(cell, text=unit, text_color=FW_DIM).pack(side="left", padx=6)
+                else:
+                    rgb = [round(values[f"led_default_color_{c}"] * 255 / 10000) for c in "rgb"]
+                    wdg = {"rgb": rgb}
+                    hexc = "#%02x%02x%02x" % tuple(rgb)
+                    sw = ctk.CTkButton(cell, text=hexc, width=130, fg_color=hexc)
+
+                    def pick(wdg=wdg, sw=sw):
+                        from tkinter import colorchooser
+                        c = colorchooser.askcolor(parent=w, title="LED-Farbe")
+                        if c and c[0]:
+                            wdg["rgb"] = [int(v) for v in c[0]]
+                            sw.configure(fg_color=c[1], text=c[1])
+                    sw.configure(command=pick)
+                    sw.pack(side="left")
+                widgets[name] = (kind, wdg, factor)
+                row += 2
+        ctk.CTkLabel(holder, text="").grid(row=row, column=0, pady=2)
+        if done_msg:
+            status.configure(text=done_msg[0], text_color=done_msg[1])
+        else:
+            status.configure(text=f"{len(values)} Einstellungen gelesen.", text_color=FW_DIM)
+
+    def apply():
+        cmds = []
+        for name, (kind, wdg, factor) in widgets.items():
+            if kind == "bool":
+                v = 1 if wdg.get() == "An" else 0
+                if v != current.get(name):
+                    cmds.append(f"write_config {name} {v}")
+            elif kind == "enum":
+                inv = {lbl: key for key, lbl in factor.items()}
+                v = inv.get(wdg.get())
+                if v is not None and v != current.get(name):
+                    cmds.append(f"write_config {name} {v}")
+            elif kind == "int":
+                text = wdg.get().strip().replace(",", ".")
+                try:
+                    v = int(round(float(text) * factor))
+                except ValueError:
+                    status.configure(text=f"„{text}“ ist keine Zahl.", text_color="red")
+                    return
+                if v != current.get(name):
+                    cmds.append(f"write_config {name} {v}")
+            else:
+                for ch, val in zip("rgb", wdg["rgb"]):
+                    v = round(val * 10000 / 255)
+                    if v != current.get(f"led_default_color_{ch}"):
+                        cmds.append(f"write_config led_default_color_{ch} {v}")
+        if not cmds:
+            status.configure(text="Nichts geändert.", text_color=FW_DIM)
+            return
+        status.configure(text=f"Schreibe {len(cmds)} Einstellung(en)…", text_color=FW_DIM)
+
+        def work():
+            lines = query_device(dev, cmds, wait=1.5)
+            ok = sum(1 for l in lines if "Updated config" in l)
+            color = "green" if ok == len(cmds) else "orange"
+            app.after(0, lambda: read((f"{ok} von {len(cmds)} Einstellung(en) übernommen.", color)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def reset_all():
+        from tkinter import messagebox
+        if not messagebox.askyesno("Zurücksetzen", "Alle Einstellungen dieses Trackers auf Standard zurücksetzen?", parent=w):
+            return
+
+        def work():
+            query_device(dev, ["reset_config all"], wait=1.0)
+            app.after(0, read)
+        threading.Thread(target=work, daemon=True).start()
+
+    ctk.CTkButton(bar, text="Neu einlesen", command=read).pack(side="left", padx=4)
+    ctk.CTkButton(bar, text="Alle auf Standard", command=reset_all).pack(side="left", padx=4)
+    ctk.CTkButton(bar, text="Übernehmen", width=160, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
+                  text_color="white", command=apply).pack(side="right", padx=4)
+    if dev.connected:
+        read()
+    else:
+        status.configure(text="Tracker ist nicht verbunden.", text_color="orange")
+
 # Buttons!
 def start_firmware_download():
     threading.Thread(target=download_firmware, daemon=True).start()
@@ -2235,6 +2592,10 @@ btn_multi_fw = ctk.CTkButton(top_frame, text="DIY Firmware-Tool", width=80, comm
                              fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
 btn_multi_fw.pack(side="left", padx=5)
 ToolTip(btn_multi_fw, "Tracker konfigurieren und auf einmal flashen")
+
+btn_devmgr = ctk.CTkButton(top_frame, text="Geräteverwaltung", width=80, command=open_device_manager)
+btn_devmgr.pack(side="left", padx=5)
+ToolTip(btn_devmgr, "Alle Geräte, Akku, Firmware und Einstellungen")
 
 status_label = ctk.CTkLabel(top_frame, text="Not connected", text_color="red")
 status_label.pack(side="left", padx=10)
