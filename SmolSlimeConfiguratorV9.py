@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.26"
+APP_VERSION = "1.0.27"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1180,15 +1180,26 @@ def bootloader_drives():
             found.append({"root": root, "serial": d["serial"], "location": d["location"]})
     return found
 
+# Ohne Nachfrage darf udisks nur fuer Programme in der aktiven Desktop-Sitzung einhaengen. Klappt das
+# nicht, einmal je Laufwerk mit Passwortfenster nachfragen (nicht bei jedem Abfragen im Sekundentakt).
+mount_asked = set()
+mount_errors = {}   # Geraetepfad -> letzte Fehlermeldung von udisksctl
+
 def mount_drive(drive):
     if drive["mount"]:
         return drive["mount"]
     for dev in reversed(drive["devs"]):
-        subprocess.run(["udisksctl", "mount", "-b", dev, "--no-user-interaction"],
-                       capture_output=True, timeout=15)
+        res = subprocess.run(["udisksctl", "mount", "-b", dev, "--no-user-interaction"],
+                             capture_output=True, text=True, timeout=15)
         mount = read_mounts().get(dev)
+        if not mount and "NotAuthorized" in (res.stderr or "") and dev not in mount_asked:
+            mount_asked.add(dev)
+            res = subprocess.run(["udisksctl", "mount", "-b", dev], capture_output=True, text=True, timeout=90)
+            mount = read_mounts().get(dev)
         if mount:
+            mount_errors.pop(dev, None)
             return mount
+        mount_errors[dev] = (res.stderr or "").strip().splitlines()[-1] if res.stderr else "unbekannter Fehler"
     return None
 
 # Wurzelpfade aller UF2-Bootloader-Laufwerke. Linux haengt neue kleine
@@ -2501,12 +2512,16 @@ def open_multiflash_window():
                     time.sleep(1)
                 ui(lambda: info.configure(text="Schreibe Firmware…"))
                 copies = []
+                seen = {d["location"]: d for d in find_usb_drives().values()}
                 for loc, r in by_loc.items():
                     if loc in mounts:
                         found[keys[id(r)]] = r
                         t = threading.Thread(target=copy_one, args=(r, mounts[loc]), daemon=True)
                         t.start()
                         copies.append(t)
+                    elif loc in seen:
+                        err = next((mount_errors[d] for d in seen[loc]["devs"] if d in mount_errors), "")
+                        ui(lambda rr=r, err=err: set_status(rr, f"UF2-Laufwerk da, aber Einhängen nicht erlaubt ({err})", "red"))
                     else:
                         ui(lambda rr=r: set_status(rr, "kein UF2-Laufwerk gefunden", "red"))
                 for t in copies:
