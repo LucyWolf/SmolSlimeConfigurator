@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1680,8 +1680,39 @@ def open_multiflash_window():
         box = ctk.CTkFrame(f2, fg_color=FW_CARD, corner_radius=10)
         box.grid(row=0, column=0, sticky="ew", padx=6)
         box.grid_columnconfigure(1, weight=1)
-        result = ctk.CTkLabel(f2, text="", anchor="w", justify="left")
-        result.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
+        result_box = ctk.CTkFrame(f2, fg_color="transparent")
+        result_box.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
+        result = ctk.CTkLabel(result_box, text="", anchor="w", justify="left")
+        result.pack(fill="x")
+        suggest = ctk.CTkFrame(result_box, fg_color="transparent")
+
+        def group_of(t):
+            for key, label, toks in FW_OPTION_GROUPS:
+                if t in toks or (key == "variant" and t.startswith("StackedSmol_")):
+                    return key, label, toks
+            return None, t, [t]
+
+        def choice_text(key, t):
+            return FW_CHOICE_LABELS.get(key, {}).get(t) or \
+                (f"Stacked Smol ({t[12:]})" if t and t.startswith("StackedSmol_") else t) or "Platinen-Standard"
+
+        # Was sich gegenueber der Auswahl aendert, z.B. "Taster an SW0 aus"
+        def describe(chosen, opts):
+            parts = []
+            for key, label, toks in FW_OPTION_GROUPS:
+                a = next((t for t in chosen if group_of(t)[0] == key), None)
+                b = next((t for t in opts if group_of(t)[0] == key), None)
+                if a != b:
+                    parts.append(f"{label} {'an' if b else 'aus'}" if len(toks) == 1 else f"{label}: {choice_text(key, b)}")
+            return ", ".join(parts)
+
+        def apply_options(opts):
+            for key, (var, tok) in choice_vars.items():
+                if tok:
+                    var.set(tok in opts)
+                else:
+                    var.set(next((t for t in opts if group_of(t)[0] == key), ""))
+            update_result()
         adv = ctk.CTkFrame(f2, fg_color="transparent")
         adv.grid(row=2, column=0, sticky="ew", padx=6, pady=(10, 0))
         nxt = nav(f2, 3, next_cmd=lambda: go(2))
@@ -1706,6 +1737,17 @@ def open_multiflash_window():
                 tip = "" if st["source"]["id"] == "all" else "\n      Tipp: Unter „Alle Quellen“ gibt es mehr Kombinationen."
                 result.configure(text="❌  Diese Kombination gibt es in dieser Version nicht." + tip, text_color="red")
                 nxt.configure(state="disabled")
+            # Bei fehlender Kombination die naechstliegenden vorhandenen Dateien anbieten
+            for w in suggest.winfo_children():
+                w.destroy()
+            suggest.pack_forget()  # Tk schrumpft einen geleerten Rahmen nicht, also ganz ausblenden
+            if not match:
+                suggest.pack(fill="x")
+                near = sorted({a["options"] for a in assets}, key=lambda o: (len(o ^ chosen), len(o), sorted(o)))[:3]
+                ctk.CTkLabel(suggest, text="Am nächsten dran gibt es:", anchor="w").pack(fill="x", pady=(6, 2))
+                for opts in near:
+                    ctk.CTkButton(suggest, text=describe(chosen, opts), anchor="w",
+                                  command=lambda o=opts: apply_options(o)).pack(anchor="w", pady=2)
 
         r = 0
         for key, label, toks in FW_OPTION_GROUPS:
