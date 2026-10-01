@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -666,9 +666,14 @@ def on_tracker_change(choice):
 # Kopfzeile wie im DIY Firmware-Tool
 header = ctk.CTkFrame(app, fg_color="transparent")
 header.pack(fill="x", padx=16, pady=(12, 0))
-ctk.CTkLabel(header, text="SmolSlime Configurator", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
-ctk.CTkLabel(header, text=f"Tracker und Dongle verbinden, einstellen und flashen · v{APP_VERSION}",
+header_text = ctk.CTkFrame(header, fg_color="transparent")
+header_text.pack(side="left")
+ctk.CTkLabel(header_text, text="SmolSlime Configurator", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+ctk.CTkLabel(header_text, text=f"Tracker und Dongle verbinden, einstellen und flashen · v{APP_VERSION}",
              text_color=("gray35", "gray65")).pack(anchor="w")
+btn_check_update = ctk.CTkButton(header, text="Nach Updates suchen", width=170,
+                                 command=lambda: check_for_update(manual=True))
+btn_check_update.pack(side="right", anchor="n", pady=(4, 0))
 
 top_frame = ctk.CTkFrame(app)
 top_frame.pack(pady=5, padx=10, fill="x")
@@ -2442,21 +2447,44 @@ if getattr(sys, "frozen", False):
 def ver_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
 
+def show_check_result(text):
+    for b in (btn_check_update, update_button):
+        b.configure(text=text)
+    app.after(4000, lambda: [b.configure(text="Nach Updates suchen", state="normal")
+                             for b in (btn_check_update, update_button)])
+
 def check_for_update(manual=False):
+    if manual:
+        for b in (btn_check_update, update_button):
+            b.configure(text="Suche…", state="disabled")
+
     def work():
         try:
-            response = requests.get(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest", timeout=10)
-            response.raise_for_status()
-            rel = response.json()
-            tag = rel.get("tag_name", "")
-            asset = next((a for a in rel.get("assets", []) if a.get("name") == UPDATE_ASSET), None)
+            # Die Release-Seite leitet auf den neuesten Tag weiter. Anders als die API hat sie
+            # kein Limit von 60 Abfragen pro Stunde, an dem die Pruefung sonst scheitern kann.
+            response = requests.get(f"https://github.com/{UPDATE_REPO}/releases/latest",
+                                    allow_redirects=False, timeout=10)
+            tag = response.headers.get("Location", "").rstrip("/").rsplit("/", 1)[-1]
+            if response.status_code not in (301, 302) or not ver_tuple(tag):
+                raise RuntimeError(f"keine Antwort von GitHub (HTTP {response.status_code})")
+            asset = {"browser_download_url": f"https://github.com/{UPDATE_REPO}/releases/download/{tag}/{UPDATE_ASSET}"}
             if ver_tuple(tag) > ver_tuple(APP_VERSION):
-                app.after(0, lambda: offer_update(tag, asset, rel.get("body") or ""))
+                notes = ""
+                try:  # Aenderungsliste nur, wenn die API gerade antwortet
+                    api = requests.get(f"https://api.github.com/repos/{UPDATE_REPO}/releases/tags/{tag}", timeout=10)
+                    if api.ok:
+                        notes = api.json().get("body") or ""
+                except Exception:
+                    pass
+                app.after(0, lambda: offer_update(tag, asset, notes))
+                if manual:
+                    app.after(0, lambda: show_check_result(f"Neu: {tag}"))
             elif manual:
-                app.after(0, lambda: append_text(f"Kein Update: v{APP_VERSION} ist aktuell.\n", "success"))
+                app.after(0, lambda: show_check_result(f"✓ v{APP_VERSION} ist aktuell"))
         except Exception as e:
             if manual:
-                app.after(0, lambda e=e: append_text(f"Update-Prüfung fehlgeschlagen: {e}\n", "error"))
+                app.after(0, lambda e=e: (append_text(f"Update-Prüfung fehlgeschlagen: {e}\n", "error"),
+                                          show_check_result("Prüfung fehlgeschlagen")))
     threading.Thread(target=work, daemon=True).start()
 
 def offer_update(tag, asset, notes):
@@ -2485,7 +2513,8 @@ def install_update():
             response.raise_for_status()
             with open(new, "wb") as f:
                 shutil.copyfileobj(response.raw, f)
-            if os.path.getsize(new) != asset.get("size", os.path.getsize(new)):
+            expected = int(response.headers.get("Content-Length") or 0)
+            if os.path.getsize(new) < 1_000_000 or (expected and os.path.getsize(new) != expected):
                 raise RuntimeError("Download unvollständig")
             os.chmod(new, 0o755)
             if sys.platform.startswith("win"):
