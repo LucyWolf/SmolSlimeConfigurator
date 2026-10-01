@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.34"
+APP_VERSION = "1.0.35"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1610,7 +1610,7 @@ def guess_board(product, boards):
             return b
     return None
 
-def open_multiflash_window():
+def open_multiflash_window(role=None):
     global multi_win
     if multi_win is not None and multi_win.winfo_exists():
         multi_win.focus()
@@ -2634,6 +2634,7 @@ def open_multiflash_window():
 
             # Geraete, die schon im Bootloader stecken: Datei direkt aufs Laufwerk bzw. per Nordic-DFU
             confirmed = set()
+            serials_before = {q.serial_number for q in serial.tools.list_ports.comports()}
             for i, r in enumerate(pre):
                 key = r["drive"]["serial"] or r["drive"]["location"] or f"boot{i}"
                 if r.get("nordic"):
@@ -2641,6 +2642,15 @@ def open_multiflash_window():
                         found[key] = r
                         confirmed.add(key)
                         ui(lambda rr=r: set_status(rr, "fertig ✅ (vom Bootloader geprüft)", "green"))
+                        # Der Bootloader hat eine andere Seriennummer als die Firmware: den Stand unter der
+                        # Seriennummer merken, mit der das Geraet gleich neu auftaucht
+                        new_serial, until = None, time.time() + 20
+                        while new_serial is None and time.time() < until:
+                            new_serial = next((q.serial_number for q in serial.tools.list_ports.comports()
+                                               if q.vid == 0x1209 and q.serial_number
+                                               and q.serial_number not in serials_before), None)
+                            time.sleep(1)
+                        ui(lambda k=new_serial: remember_flash(k, asset, st["role"]))
                 else:
                     found[key] = r
                     copy_one(r, r["drive"]["root"])
@@ -2715,6 +2725,8 @@ def open_multiflash_window():
                         r = waiting.pop(key, None) if key else None
                         if r:
                             ui(lambda rr=r: set_status(rr, "fertig ✅", "green"))
+                            stored = (r["dev"].key if r.get("dev") else "") or p.serial_number
+                            ui(lambda k=stored: remember_flash(k, asset, st["role"]))
                 time.sleep(1)
             for r in waiting.values():
                 ui(lambda rr=r: set_status(rr, "geschrieben, aber nicht zurückgemeldet", "orange"))
@@ -2770,7 +2782,9 @@ def open_multiflash_window():
 
     win.protocol("WM_DELETE_WINDOW", on_close)
     go(0)
-    src_id = settings.get("fw_last", {}).get("tracker", {}).get("source", "main")
+    if role:
+        set_role(role)
+    src_id = settings.get("fw_last", {}).get(st["role"], {}).get("source", "main")
     select_source(next((s for s in fw_sources() if s["id"] == src_id), fw_sources()[0]))
 
 # ---------- Nordic Serial DFU ("Open DFU Bootloader", z.B. Holyiot-/eByte-/Nordic-Dongle) ----------
@@ -2951,12 +2965,27 @@ def nordic_flash_hex(port, hex_path, progress=None):
 def nordic_bootloader_ports():
     return [p for p in serial.tools.list_ports.comports() if (p.vid, p.pid) == NORDIC_DFU_ID]
 
+# Firmware-Stand je Geraet: was die App zuletzt draufgeflasht hat. Grundlage fuer "Update verfuegbar".
+def de_date(iso):
+    return f"{iso[8:10]}.{iso[5:7]}.{iso[:4]}" if len(iso) >= 10 else (iso or "?")
+
+def remember_flash(key, asset, role):
+    if not key or not asset.get("src") or not asset["src"].get("repo"):
+        return   # eigene Datei: keine Quelle, die man spaeter wieder fragen koennte
+    settings.setdefault("flashed", {})[key] = {
+        "source": asset["src"]["id"], "repo": asset["src"]["repo"], "board": asset.get("board", ""),
+        "options": sorted(asset.get("options", ())), "name": asset["name"], "date": asset.get("date", ""),
+        "tag": asset.get("tag", ""), "role": role, "when": time.strftime("%Y-%m-%d %H:%M"),
+    }
+    save_settings()
+
 # ---------- Geraeteverwaltung ----------
 # Uebersicht ueber alle bekannten Geraete. Firmware, Board, Sensor, Akku und Kopplung
 # kommen aus der Antwort auf "info"; Einstellungen werden per read_config/write_config
 # gelesen und geschrieben, ohne neu zu flashen.
 dev_win = None
 dev_details = {}   # dev.key -> {"fw", "board", "imu", "battery", "paired"}
+dev_updates = {}   # dev.key -> ("aktuell"|"update"|"weg"|"fehler", neues Datum)
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 # Schickt Befehle und sammelt die Antwortzeilen. Nur aus einem Hintergrund-Thread aufrufen.
@@ -3119,6 +3148,26 @@ def open_device_manager():
             ctk.CTkLabel(card, text="   ·   ".join(facts), text_color=FW_DIM, anchor="w", justify="left",
                          wraplength=900).pack(fill="x", padx=12, pady=(2, 6))
 
+            # Firmware-Stand aus dem letzten Flashen ueber die App
+            fl = settings.get("flashed", {}).get(dev.key)
+            stand = ctk.CTkFrame(card, fg_color="transparent")
+            stand.pack(fill="x", padx=12, pady=(0, 6))
+            if not fl:
+                ctk.CTkLabel(stand, text="Firmware-Stand unbekannt – nach dem ersten Flashen über das DIY "
+                                         "Firmware-Tool merkt sich die App ihn", text_color=FW_DIM).pack(side="left")
+            else:
+                ctk.CTkLabel(stand, text=f"Geflasht: {fl['name']} vom {de_date(fl['date'])} "
+                                         f"({fl['source']}, {fl['tag']})", text_color=FW_DIM).pack(side="left")
+                upd, newdate = dev_updates.get(dev.key, ("", ""))
+                text, color = {"aktuell": ("✓ aktuell", "green"),
+                               "update": (f"⬆ Update verfügbar (neu vom {de_date(newdate)})", "orange"),
+                               "weg": ("Datei gibt es in der Quelle nicht mehr", "orange"),
+                               "fehler": ("Update-Prüfung fehlgeschlagen", "red")}.get(upd, ("prüfe …", None))
+                ctk.CTkLabel(stand, text=f"   {text}", text_color=color or FW_DIM).pack(side="left")
+                if upd == "update":
+                    ctk.CTkButton(stand, text="Update…", width=90, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
+                                  text_color="white", command=lambda f=fl: open_update(f)).pack(side="left", padx=8)
+
             row = ctk.CTkFrame(card, fg_color="transparent")
             row.pack(fill="x", padx=8, pady=(0, 10))
 
@@ -3146,6 +3195,34 @@ def open_device_manager():
             for text, cmd in buttons:
                 ctk.CTkButton(row, text=text, width=110, command=cmd).pack(side="left", padx=4)
 
+    # Gespeicherte Staende mit der jeweiligen Quelle vergleichen (gleiche Datei, neueres Datum?)
+    def check_updates():
+        def work():
+            for key, fl in list(settings.get("flashed", {}).items()):
+                try:
+                    rels = fetch_releases(fl["repo"])
+                    rel = next((r for r in rels if r.get("stable")), rels[0] if rels else None)
+                    if rel is not None and rel["assets"] is None:
+                        rel["assets"] = fetch_release_assets(fl["repo"], rel["tag"])
+                    match = next((a for a in (rel["assets"] if rel else []) if a["name"] == fl["name"]), None)
+                    if match is None:
+                        dev_updates[key] = ("weg", "")
+                    elif match.get("date", "") > fl.get("date", ""):
+                        dev_updates[key] = ("update", match["date"])
+                    else:
+                        dev_updates[key] = ("aktuell", match.get("date", ""))
+                except Exception:
+                    dev_updates[key] = ("fehler", "")
+            app.after(0, lambda: render(force=True) if win.winfo_exists() else None)
+        threading.Thread(target=work, daemon=True).start()
+
+    def open_update(fl):
+        if multi_win is not None and multi_win.winfo_exists():
+            multi_win.destroy()   # mit der Auswahl dieses Geraets neu oeffnen
+        settings.setdefault("fw_last", {})[fl["role"]] = {"source": fl["source"], "board": fl["board"],
+                                                        "options": fl["options"]}
+        open_multiflash_window(role=fl["role"])
+
     def tick():
         if not win.winfo_exists():
             return
@@ -3153,6 +3230,7 @@ def open_device_manager():
         win.after(1500, tick)
 
     tick()
+    check_updates()
 
 # Einstellungen eines Trackers lesen und aendern, ohne neu zu flashen
 def open_device_settings(dev, parent):
