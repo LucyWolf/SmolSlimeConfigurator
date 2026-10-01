@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.0.16"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1435,6 +1435,10 @@ def fetch_releases(repo):
     for rel in rels:
         assets = []
         for a in rel.get("assets", []):
+            # Die offizielle CI laedt zusaetzlich Builds aus jitingcns Code hoch (..._JitingCat). Wer eine
+            # Quelle waehlt, bekommt nur deren eigene Firmware; jitingcn hat eine eigene Quelle.
+            if "jitingcat" in a.get("name", "").lower():
+                continue
             info = parse_fw_name(a.get("name", ""))
             if info:
                 info["url"] = a.get("browser_download_url")
