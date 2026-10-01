@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1209,7 +1209,7 @@ FW_OPTION_GROUPS = [
     ("bus", "Sensor-Anschluss", ["SPI", "I2C", "smSPI"]),
     ("mag", "Magnetometer", ["Mag"]),
     ("clk", "Sensor-Takt (CLKIN/INT2)", ["CLK"]),   # an/aus; NoCLK wird beim Einlesen umgerechnet
-    ("sleep", "Schlafmodus aus", ["NoSleep"]),
+    ("sleep", "Schlafmodus (WOM)", ["Sleep"]),   # an/aus; NoSleep wird beim Einlesen umgerechnet
     ("sw0", "Taster an SW0", ["SW0"]),
     ("tdma", "Funkmodus TDMA", ["TDMA"]),
     ("data", "Datensammlung (CDC)", ["DataCollect"]),
@@ -1233,9 +1233,10 @@ FW_OPTION_HELP = {
            "Zeitmessung genauer und spart etwas Strom. Am ICM-Sensor gehört diese Leitung an CLKIN – das ist "
            "derselbe Pin wie INT2, nicht INT1 (INT1 ist der normale Interrupt). Am Controller kommt der Takt beim "
            "ProMicro aus P0.20, beim Stacked Smol aus P1.11. Nur einschalten, wenn die Leitung angeschlossen ist.",
-    "sleep": "Normalerweise legt sich der Tracker schlafen, wenn er still liegt, und wacht bei Bewegung wieder auf. "
-             "Das spart viel Akku. Mit „Schlafmodus aus“ bleibt er immer wach: Er reagiert sofort, aber der Akku "
-             "hält deutlich kürzer. Sinnvoll, wenn dein Sensor das Aufwecken durch Bewegung nicht kann.",
+    "sleep": "An (empfohlen): Liegt der Tracker still, legt er sich schlafen und wacht bei Bewegung von selbst "
+             "wieder auf (WOM = Wake on Motion). Das spart viel Akku. Aus: Der Tracker bleibt immer wach und "
+             "reagiert sofort, aber der Akku hält deutlich kürzer. Aus nur, wenn dein Sensor das Aufwecken durch "
+             "Bewegung nicht kann.",
     "sw0": "Nur für einen Taster (drücken, federt zurück) zwischen Pin P1.00 und GND. Damit kannst du koppeln "
            "(5 Sekunden halten), ausschalten und aufwecken. Ein Ein/Aus-Schiebeschalter zwischen Akku und Board "
            "ist kein SW0 – dafür nicht anhaken. Ein Taster am RST-Pin funktioniert auch ohne diese Option. "
@@ -1356,7 +1357,7 @@ def label_with_help(parent, row, text, help_text, bold=False, padx=12):
 # Zwei Namensschemata: SlimeNRF_Tracker_SPI_Mag_ProMicro (CI) und
 # SlimeNRF_ProMicro_StackedSmol_Tracker_I2C bzw. Aero_Tracker_Pro (jitingcn).
 # Bekannte Optionen werden herausgezogen, der Rest ist das Board.
-FW_TOKEN_ALIASES = {t.lower(): t for t in FW_OPTION_TOKENS | {"NoCLK"}}
+FW_TOKEN_ALIASES = {t.lower(): t for t in (FW_OPTION_TOKENS - {"Sleep"}) | {"NoCLK", "NoSleep"}}
 
 def parse_fw_name(name):
     base, _, ext = name.rpartition(".")
@@ -1382,6 +1383,11 @@ def parse_fw_name(name):
     opts -= {"CLK", "NoCLK"}
     if clk_on:
         opts.add("CLK")
+    # Schlafmodus ebenso als an/aus: "NoSleep" im Namen heisst aus, sonst an
+    if "NoSleep" in opts:
+        opts.discard("NoSleep")
+    else:
+        opts.add("Sleep")
     return {
         "role": role,
         "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() != "nosleepclk"
@@ -1682,7 +1688,8 @@ def open_multiflash_window():
         saved_opts = frozenset(saved.get("options", []))
         # Vorschlag: gespeicherte Wahl, sonst die schlichteste Bauweise ohne Sonderplatine (Bao/Chrysalis)
         base = saved_opts if saved.get("board") == st["board"] and saved_opts in sets else \
-            min(sets, key=lambda o: (len(o) + 10 * any(t in ("Chrysalis", "Bao") or t.startswith("StackedSmol") for t in o),
+            min(sets, key=lambda o: (len(o - {"Sleep"}) + (0 if "Sleep" in o else 1)
+                                     + 10 * any(t in ("Chrysalis", "Bao") or t.startswith("StackedSmol") for t in o),
                                      sorted(o)))
         fixed = frozenset.intersection(*sets)
         choice_vars = {}
