@@ -33,6 +33,12 @@ read_thread = None
 stop_read = threading.Event()
 custom_fw_path = None
 
+# Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
+# nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
+APP_VERSION = "1.0.0"
+UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
+UPDATE_ASSET = "SmolSlimeConfigurator-Linux"
+
 # OS temp dir
 def get_settings_path():
     if sys.platform.startswith("linux"):
@@ -151,7 +157,7 @@ def fetch_latest_firmware_assets():
 
 # Start base window, size & name
 app = ctk.CTk()
-app.title("SmolSlime Configurator")
+app.title(f"SmolSlime Configurator v{APP_VERSION}")
 app.geometry("1080x500")
 
 # Overdone tooltip overlay
@@ -2177,7 +2183,7 @@ elif platform_name == "Linux":
 
 version_label = ctk.CTkLabel(
     settings_frame,
-    text=f"SmolSlimeConfigurator Version 9 ({platform_name})",
+    text=f"SmolSlimeConfigurator Version 9 · Fassung v{APP_VERSION} ({platform_name})",
     text_color="gray"
 )
 version_label.pack(anchor="ne", padx=10, pady=5)
@@ -2295,6 +2301,92 @@ repo_button = ctk.CTkButton(button_row, text="Open GitHub Repo", command=open_re
 repo_button.pack(side="left", padx=10)
 
 ToolTip(repo_button, "github.com/ICantMakeThings/SmolSlimeConfigurator")
+
+# Updater: sucht beim Start das neueste Release von UPDATE_REPO. Unter Linux
+# (gebaute Einzeldatei) wird die Programmdatei ersetzt und neu gestartet,
+# sonst nur die Release-Seite geoeffnet.
+update_info = {}
+
+def ver_tuple(v):
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
+
+def check_for_update(manual=False):
+    def work():
+        try:
+            response = requests.get(f"https://api.github.com/repos/{UPDATE_REPO}/releases/latest", timeout=10)
+            response.raise_for_status()
+            rel = response.json()
+            tag = rel.get("tag_name", "")
+            asset = next((a for a in rel.get("assets", []) if a.get("name") == UPDATE_ASSET), None)
+            if ver_tuple(tag) > ver_tuple(APP_VERSION):
+                app.after(0, lambda: offer_update(tag, asset, rel.get("body") or ""))
+            elif manual:
+                app.after(0, lambda: append_text(f"Kein Update: v{APP_VERSION} ist aktuell.\n", "success"))
+        except Exception as e:
+            if manual:
+                app.after(0, lambda e=e: append_text(f"Update-Prüfung fehlgeschlagen: {e}\n", "error"))
+    threading.Thread(target=work, daemon=True).start()
+
+def offer_update(tag, asset, notes):
+    update_info.update(tag=tag, asset=asset, notes=notes)
+    btn_update.configure(text=f"⬆ Update {tag}", state="normal")
+    btn_update.pack(side="left", padx=5, before=status_label)
+    append_text(f"Update verfügbar: {tag} (installiert: v{APP_VERSION}).\n", "success")
+
+def install_update():
+    from tkinter import messagebox
+    tag, asset = update_info.get("tag"), update_info.get("asset")
+    if not (getattr(sys, "frozen", False) and sys.platform.startswith("linux") and asset):
+        webbrowser.open(f"https://github.com/{UPDATE_REPO}/releases/latest")
+        return
+    notes = update_info.get("notes", "").strip()
+    if not messagebox.askyesno("Update", f"Auf {tag} aktualisieren?\n\n{notes[:800]}\n\nDas Programm startet danach neu.",
+                               parent=app):
+        return
+    btn_update.configure(state="disabled", text="Lade Update…")
+    exe = sys.executable
+
+    def work():
+        try:
+            new = exe + ".neu"
+            response = requests.get(asset["browser_download_url"], stream=True, timeout=60)
+            response.raise_for_status()
+            with open(new, "wb") as f:
+                shutil.copyfileobj(response.raw, f)
+            if os.path.getsize(new) != asset.get("size", os.path.getsize(new)):
+                raise RuntimeError("Download unvollständig")
+            os.chmod(new, 0o755)
+            os.replace(new, exe)  # Linux erlaubt das Ersetzen der laufenden Datei
+        except Exception as e:
+            app.after(0, lambda e=e: (append_text(f"Update fehlgeschlagen: {e}\n", "error"),
+                                      btn_update.configure(state="normal", text=f"⬆ Update {tag}")))
+            return
+        app.after(0, restart_app)
+    threading.Thread(target=work, daemon=True).start()
+
+def restart_app():
+    for dev in devices:
+        disconnect_device(dev)
+    # Die neue Einzeldatei soll sich frisch entpacken und nicht die Umgebung
+    # (Entpack-Ordner, LD_LIBRARY_PATH) dieser Instanz uebernehmen.
+    env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+    env.pop("_MEIPASS2", None)
+    if "LD_LIBRARY_PATH_ORIG" in env:
+        env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
+    else:
+        env.pop("LD_LIBRARY_PATH", None)
+    subprocess.Popen([sys.executable], cwd=os.path.dirname(sys.executable), env=env, start_new_session=True)
+    app.destroy()
+    os._exit(0)
+
+btn_update = ctk.CTkButton(top_frame, text="⬆ Update", width=80, fg_color="green", hover_color="#006400",
+                           command=install_update)
+ToolTip(btn_update, "Neue Fassung herunterladen und neu starten")
+
+update_button = ctk.CTkButton(button_row, text="Nach Updates suchen", command=lambda: check_for_update(manual=True))
+update_button.pack(side="left", padx=10)
+ToolTip(update_button, f"Installiert: v{APP_VERSION}")
+app.after(3000, check_for_update)
 
 
 # CLI, links daneben die Geraete zum Umschalten

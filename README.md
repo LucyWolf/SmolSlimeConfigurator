@@ -1,6 +1,17 @@
 # SmolSlimeConfigurator <img src="icon.png" width="32" height="32" alt="SmolSlimeConfiguratorICON">
 Pure Simple UI Configurator for SlimeVR Smol Slimes (Unofficial)
 
+> **Diese Fassung (LucyWolf)** baut auf dem Original von [ICantMakeThings](https://github.com/ICantMakeThings/SmolSlimeConfigurator) auf und ergänzt vor allem für Linux:
+>
+> - **Mehrere Geräte gleichzeitig** – Dongle und Tracker verbunden, jedes mit eigenem Terminal, links umschalten. Koppeln ohne das Programm zweimal zu öffnen; Dongle festlegen (verbindet sich von selbst).
+> - **DIY Firmware-Tool** – Assistent wie im SlimeVR-Server: Quelle → Board → Version → Bauweise → Geräte → Flashen. Mehrere Tracker auf einmal, Erklärung hinter jedem „?“, Firmware-Einstellungen (`write_config`) direkt nach dem Flashen.
+> - **USB-Rechte** – bei „Permission denied“ einmal per Passwortfenster einrichten.
+> - **Updater** – prüft beim Start auf ein neues Release und aktualisiert sich selbst.
+>
+> **Installation (Linux):** aus den [Releases](https://github.com/LucyWolf/SmolSlimeConfigurator/releases) `SmolSlimeConfigurator-Linux` und `SmolSlime-installieren.sh` in denselben Ordner laden, dann `SmolSlime-installieren.sh` doppelklicken. Prüft die Treiber, richtet die USB-Rechte ein und legt einen Menüeintrag an.
+>
+> Neues Release bauen: `tools/release.sh` (Version steht in `APP_VERSION`, letzte Stelle zählt bis 99). Stand: 01.10.2026
+
 
 <img width="1316" height="539" alt="newyes" src="https://github.com/user-attachments/assets/ce07f8ac-0857-42c3-9a02-f86d84e19fcc" />
 
