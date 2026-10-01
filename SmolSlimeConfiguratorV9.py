@@ -1067,7 +1067,7 @@ FW_SOURCES = [
 ]
 
 FW_OPTION_GROUPS = [
-    ("variant", "Bauform", ["Chrysalis", "Bao"]),
+    ("variant", "Bauform", ["StackedSmol", "Chrysalis", "Bao"]),
     ("bus", "Sensor-Anschluss", ["SPI", "I2C", "smSPI"]),
     ("mag", "Magnetometer", ["Mag"]),
     ("clk", "Externer Sensor-Takt", ["CLK", "NoCLK"]),
@@ -1081,8 +1081,9 @@ FW_OPTION_TOKENS = {t for _, _, toks in FW_OPTION_GROUPS for t in toks}
 # Erklaerungen fuer Leute ohne Vorwissen. Grundlage: Kconfig der offiziellen
 # Firmware und das Build-Skript der CI (was jede Option beim Bauen umschaltet).
 FW_OPTION_HELP = {
-    "variant": "Nur wählen, wenn dein Tracker auf einer fertigen Chrysalis- oder Bao-Platine aufgebaut ist. "
-               "Hast du einen ProMicro selbst verdrahtet: „Platinen-Standard“.",
+    "variant": "Wie der Tracker um den Controller herum aufgebaut ist. „Stacked Smol“: der Sensor sitzt huckepack "
+               "direkt auf dem ProMicro. Chrysalis und Bao sind fertige Tracker-Platinen. Hast du einen ProMicro "
+               "selbst mit Kabeln verdrahtet: „Platinen-Standard“.",
     "bus": "Wie der Bewegungssensor mit dem Controller verbunden ist. SPI ist schneller und weniger störanfällig "
            "und wird deshalb empfohlen. I2C braucht weniger Drähte und funktioniert auch. Wichtig: Die Wahl muss "
            "zu deiner Verdrahtung passen, sonst wird der Sensor nicht gefunden. „SPI (Smol-Belegung)“ ist SPI mit "
@@ -1106,7 +1107,7 @@ FW_OPTION_HELP = {
 
 FW_CHOICE_LABELS = {
     "bus": {"SPI": "SPI (empfohlen)", "I2C": "I2C", "smSPI": "SPI (Smol-Belegung)", None: "Platinen-Standard"},
-    "variant": {None: "Platinen-Standard"},
+    "variant": {"StackedSmol": "Stacked Smol", None: "Platinen-Standard"},
     "clk": {"CLK": "An", "NoCLK": "Aus", None: "Platinen-Standard"},
 }
 
@@ -1205,10 +1206,18 @@ def parse_fw_name(name):
     tokens = [t for t in base.replace("DataCollect_CDC", "DataCollect").split("_") if t]
     role = "dongle" if any(t.lower() == "receiver" for t in tokens) else "tracker"
     rest = [t for t in tokens if t.lower() not in ("slimenrf", "tracker", "receiver", "uf2", "hex")]
+    # jitingcn: ProMicro_StackedSmol_601N1 = Stacked-Smol-Variante mit eigenem Sensormodul -> Bauform, kein Board
+    if any(t.lower() == "stackedsmol" for t in rest):
+        extra = [t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() not in ("nosleepclk", "promicro")]
+        if extra:
+            rest = [t for t in rest if t not in extra and t.lower() != "stackedsmol"] + ["StackedSmol_" + "_".join(extra)]
     return {
         "role": role,
-        "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() != "nosleepclk") or "Standard",
+        "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() != "nosleepclk"
+                          and not t.startswith("StackedSmol_"))
+                 or ("ProMicro" if any(t.lower().startswith("stackedsmol") for t in rest) else "Standard"),
         "options": frozenset(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES)
+                   | frozenset(t for t in rest if t.startswith("StackedSmol_"))
                    | (frozenset({"NoSleep", "CLK"}) if any(t.lower() == "nosleepclk" for t in rest) else frozenset()),
         "ext": ext,
         "name": name,
@@ -1507,7 +1516,8 @@ def open_multiflash_window():
         saved_opts = frozenset(saved.get("options", []))
         # Vorschlag: gespeicherte Wahl, sonst die schlichteste Bauweise ohne Sonderplatine (Bao/Chrysalis)
         base = saved_opts if saved.get("board") == st["board"] and saved_opts in sets else \
-            min(sets, key=lambda o: (len(o) + 10 * bool(o & {"Chrysalis", "Bao"}), sorted(o)))
+            min(sets, key=lambda o: (len(o) + 10 * any(t in ("Chrysalis", "Bao") or t.startswith("StackedSmol") for t in o),
+                                     sorted(o)))
         fixed = frozenset.intersection(*sets)
         choice_vars = {}
 
@@ -1543,6 +1553,8 @@ def open_multiflash_window():
 
         r = 0
         for key, label, toks in FW_OPTION_GROUPS:
+            if key == "variant":
+                toks = toks + sorted({t for o in sets for t in o if t.startswith("StackedSmol_")})
             present = [t for t in toks if any(t in s for s in sets)]
             has_none = any(not (s & set(toks)) for s in sets)
             choices = present + ([None] if has_none else [])
@@ -1563,11 +1575,13 @@ def open_multiflash_window():
                 fr.grid(row=r, column=1, sticky="w", pady=(10, 0))
                 # Beim Sensor-Anschluss auch zeigen, was diese Quelle nicht hat, damit die Wahl sichtbar bleibt
                 shown = choices + ([t for t in toks if t not in present and t != "smSPI"] if key == "bus" else [])
-                for t in shown:
+                for i, t in enumerate(shown):
                     available = t in choices
-                    text = names.get(t, t or "Platinen-Standard") + ("" if available else " – nicht in dieser Quelle")
+                    text = names.get(t) or (f"Stacked Smol ({t[12:]})" if t and t.startswith("StackedSmol_") else t)
+                    text += "" if available else " – nicht in dieser Quelle"
                     ctk.CTkRadioButton(fr, text=text, variable=var, value=t or "", command=update_result,
-                                       state="normal" if available else "disabled").pack(side="left", padx=(0, 14))
+                                       state="normal" if available else "disabled").grid(
+                        row=i // 3, column=i % 3, sticky="w", padx=(0, 14), pady=2)
                 choice_vars[key] = (var, None)
             ctk.CTkLabel(box, text=FW_OPTION_HELP.get(key, ""), anchor="w", justify="left", wraplength=640,
                          text_color=FW_DIM).grid(row=r + 1, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 4))
