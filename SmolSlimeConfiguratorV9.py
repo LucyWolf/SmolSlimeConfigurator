@@ -15,6 +15,9 @@ import json
 import webbrowser
 import re
 import glob
+import hashlib
+import binascii
+import struct
 import urllib.parse
 from tkinter import filedialog
 import tkinter as tk
@@ -36,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.29"
+APP_VERSION = "1.0.30"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -2320,40 +2323,29 @@ def open_multiflash_window():
         is_uf2 = st["asset"]["ext"] == "uf2"
         box = ctk.CTkFrame(f4, fg_color=FW_CARD, corner_radius=10)
         box.grid(row=0, column=0, sticky="ew", padx=6)
-        method = tk.StringVar(value="uf2" if is_uf2 else "")
+        method = tk.StringVar(value="uf2" if is_uf2 else "serial")
         ctk.CTkRadioButton(box, text="UF2-Laufwerk – Gerät startet in den Bootloader, die Datei wird kopiert",
                            variable=method, value="uf2", state="normal" if is_uf2 else "disabled").pack(anchor="w", padx=12, pady=(10, 4))
-        ctk.CTkRadioButton(box, text="nRF Connect – für .hex-Dateien, Anleitung unten",
-                           variable=method, value="serial", state="disabled").pack(anchor="w", padx=12, pady=(4, 10))
+        ctk.CTkRadioButton(box, text="Seriell (Nordic-Bootloader) – für .hex, z. B. Holyiot-, eByte-, Nordic-Dongle",
+                           variable=method, value="serial", state="disabled" if is_uf2 else "normal").pack(anchor="w", padx=12, pady=(4, 10))
         if st["role"] == "tracker":
             ctk.CTkCheckBox(box, text="Kopplungsdaten vorher löschen (danach neu koppeln)",
                             variable=clear_var).pack(anchor="w", padx=12, pady=(0, 10))
         nxt = nav(f4, 2, next_cmd=lambda: go(4), next_text="Weiter zum Flashen")
-        if is_uf2:
-            nxt.configure(state="normal")
-        else:
-            # Laut SlimeVR-Doku (Smol Flashing) geht der Nordic-Bootloader dieser Dongles nur mit nRF Connect
+        nxt.configure(state="normal")
+        if not is_uf2:
             hexbox = ctk.CTkFrame(f4, fg_color=FW_CARD, corner_radius=10)
             hexbox.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
             ctk.CTkLabel(hexbox, text=(
-                f"{st['asset']['name']} gibt es nur als .hex. Dieser Dongle hat den Nordic-Bootloader "
-                "(„Open DFU Bootloader“) – laut SlimeVR-Doku geht das nur mit nRF Connect for Desktop:\n\n"
-                "1. Datei herunterladen (Knopf unten).\n"
-                "2. Diese App schließen, in nRF Connect den „Programmer“ öffnen.\n"
-                "3. Dongle in den Bootloader bringen – die LED pulsiert dann:\n"
-                "     HolyIOT-21017: mitgelieferten Magneten (steckt im USB-Stecker) an die LED halten\n"
-                "     eByte: rechter Knopf · Nordic-Dongle: seitlicher Knopf\n"
-                "4. Oben links das Gerät wählen, „Add File“, die .hex wählen, „Write“."),
+                "Beim HolyIOT-21017 bittet dich die App, den mitgelieferten Magneten an die LED zu halten. Andere "
+                "Dongles schickt sie per „dfu“ in den Nordic-Bootloader, sonst von Hand (eByte: rechter Knopf · "
+                "Nordic-Dongle: seitlicher Knopf). Die LED pulsiert dann, und die App überträgt die Firmware.\n"
+                "Falls es nicht klappt, geht es weiterhin mit nRF Connect („Programmer“)."),
                 anchor="w", justify="left", wraplength=700).pack(anchor="w", padx=12, pady=(10, 6))
-            links = ctk.CTkFrame(hexbox, fg_color="transparent")
-            links.pack(anchor="w", padx=12, pady=(0, 10))
-            if st["asset"].get("url"):
-                ctk.CTkButton(links, text="⬇ Datei herunterladen", fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
-                              text_color="white",
-                              command=lambda u=st["asset"]["url"]: webbrowser.open(u)).pack(side="left", padx=(0, 8))
-            ctk.CTkButton(links, text="Anleitung in der Doku ↗",
+            ctk.CTkButton(hexbox, text="Anleitung mit nRF Connect ↗",
                           command=lambda: webbrowser.open(
-                              "https://docs.slimevr.dev/smol-slimes/firmware/smol-flashing-firmware.html")).pack(side="left")
+                              "https://docs.slimevr.dev/smol-slimes/firmware/smol-flashing-firmware.html")).pack(
+                anchor="w", padx=12, pady=(0, 10))
 
     # ---------- 5: Flashen ----------
     f5 = make_step(4, "Flashen", "Firmware aufspielen")
@@ -2375,9 +2367,18 @@ def open_multiflash_window():
         for r in targets:
             r["status2"] = ctk.CTkLabel(box, text=f"{device_name(r['dev'])}: bereit", anchor="w")
             r["status2"].pack(anchor="w", padx=24)
-        # Schon im Bootloader steckende Geraete (UF2-Laufwerk) werden direkt mitgeflasht
+        # Schon im Bootloader steckende Geraete (UF2-Laufwerk bzw. Nordic-Bootloader) werden direkt mitgeflasht
         pre = []
-        for d in bootloader_drives():
+        if st["asset"]["ext"] == "hex":
+            for port in nordic_bootloader_ports():
+                line = ctk.CTkFrame(box, fg_color="transparent")
+                line.pack(anchor="w", padx=24)
+                ctk.CTkLabel(line, text=f"Im Nordic-Bootloader ({port.device}):", anchor="w").pack(side="left")
+                lbl = ctk.CTkLabel(line, text=" bereit – wird direkt beschrieben", anchor="w")
+                lbl.pack(side="left")
+                pre.append({"nordic": port.device, "dev": None, "status": lbl, "status2": None,
+                            "drive": {"serial": port.serial_number or "", "location": "", "root": ""}})
+        for d in (bootloader_drives() if st["asset"]["ext"] == "uf2" else []):
             line = ctk.CTkFrame(box, fg_color="transparent")
             line.pack(anchor="w", padx=24)
             name = f"Im Bootloader ({d['serial'] or os.path.basename(d['root'].rstrip(os.sep)) or d['root']})"
@@ -2430,10 +2431,23 @@ def open_multiflash_window():
 
     def flash_start(targets, pre=()):
         targets = [r for r in targets if r["dev"] and r["dev"].connected]   # inzwischen abgezogene auslassen
-        pre = [r for r in pre if os.path.isfile(os.path.join(r["drive"]["root"], "INFO_UF2.TXT"))]
+        pre = [r for r in pre if (r.get("nordic") and any(p.device == r["nordic"] for p in nordic_bootloader_ports()))
+               or (r["drive"]["root"] and os.path.isfile(os.path.join(r["drive"]["root"], "INFO_UF2.TXT")))]
         if st["busy"] or not (targets or pre):
             flash_ctl["info"].configure(text="Kein Gerät verbunden.", text_color="red")
             return
+        # Sicherung gegen falsche Firmware: Board der Datei mit dem Namen des Geraets vergleichen
+        board = st["asset"].get("board") or st.get("board") or ""
+        odd = [device_name(r["dev"]) for r in targets
+               if r["dev"].product and board and not guess_board(r["dev"].product, [board])]
+        if odd:
+            from tkinter import messagebox
+            if not messagebox.askyesno(
+                    "Passt die Firmware?",
+                    f"Die Datei ist für „{board.replace('_', ' ')}“, aber diese Geräte melden sich anders:\n"
+                    + "\n".join(f"– {n}" for n in odd) + "\n\nTrotzdem flashen?", default="no", parent=win):
+                flash_ctl["info"].configure(text="Abgebrochen – Firmware passt evtl. nicht zum Gerät.", text_color="orange")
+                return
         cmds, err = collect_settings()
         if err:
             flash_ctl["info"].configure(text=f"Einstellungen: {err}", text_color="red")
@@ -2525,12 +2539,60 @@ def open_multiflash_window():
             keys = {id(r): r["dev"].serial_number or r["dev"].location or f"#{i}" for i, r in enumerate(targets)}
             found = {}
 
-            # Geraete, die schon im Bootloader stecken: Datei direkt aufs Laufwerk
-            for i, r in enumerate(pre):
-                found[r["drive"]["serial"] or r["drive"]["location"] or f"boot{i}"] = r
-                copy_one(r, r["drive"]["root"])
+            # .hex: ueber den Nordic-Bootloader (Seriell-DFU) uebertragen
+            def flash_nordic(r, port):
+                def prog(done, total):
+                    ui(lambda: set_status(r, f"überträgt … {done * 100 // total} %"))
+                try:
+                    nordic_flash_hex(port, fw_path, prog)
+                    ui(lambda: set_status(r, "geschrieben, startet neu…"))
+                    return True
+                except Exception as e:
+                    ui(lambda e=e: set_status(r, f"Übertragung fehlgeschlagen: {e}", "red"))
+                    return False
 
-            if sys.platform.startswith("linux") and all(r["dev"].location for r in targets):
+            def nordic_target(r):
+                before = {p.device for p in nordic_bootloader_ports()}
+                if "holyiot" in (r["dev"].product or "").lower():
+                    # Der Holyiot kommt nur per Magnet in den Bootloader - kein dfu schicken, nur Anschluss freigeben
+                    r["dev"].paused = True
+                    disconnect_device(r["dev"])
+                    ui(refresh_sidebar)
+                    r["manual"] = True
+                    hint = "Bitte jetzt den mitgelieferten Magneten an die LED halten (die LED pulsiert dann)"
+                else:
+                    enter_bootloader(r)
+                    hint = ("Bitte Bootloader von Hand starten: eByte – rechter Knopf, Nordic-Dongle – seitlicher Knopf, "
+                            "HolyIOT – Magnet an die LED")
+                asked, port, start = False, None, time.time()
+                while port is None and time.time() < start + 90:
+                    port = next((p.device for p in nordic_bootloader_ports() if p.device not in before), None)
+                    if port is None and not asked and (r.get("manual") or time.time() > start + 5):
+                        asked = True
+                        ui(lambda: set_status(r, hint, "orange"))
+                    time.sleep(0.5)
+                if port is None:
+                    ui(lambda: set_status(r, "kein Nordic-Bootloader gefunden", "red"))
+                    return False
+                time.sleep(1.0)   # Anschluss bereit werden lassen
+                return flash_nordic(r, port)
+
+            # Geraete, die schon im Bootloader stecken: Datei direkt aufs Laufwerk bzw. per Nordic-DFU
+            for i, r in enumerate(pre):
+                key = r["drive"]["serial"] or r["drive"]["location"] or f"boot{i}"
+                if r.get("nordic"):
+                    if flash_nordic(r, r["nordic"]):
+                        found[key] = r
+                else:
+                    found[key] = r
+                    copy_one(r, r["drive"]["root"])
+
+            if asset.get("ext") == "hex":
+                for n, r in enumerate(targets, 1):
+                    ui(lambda n=n: info.configure(text=f"Gerät {n} von {len(targets)}…"))
+                    if nordic_target(r):
+                        found[keys[id(r)]] = r
+            elif sys.platform.startswith("linux") and all(r["dev"].location for r in targets):
                 # Linux: alle gleichzeitig, Laufwerk und Tracker ueber den USB-Steckplatz zuordnen
                 before = set(find_usb_drives())
                 for r in targets:
@@ -2589,6 +2651,8 @@ def open_multiflash_window():
             deadline = time.time() + 30
             while waiting and time.time() < deadline:
                 for p in serial.tools.list_ports.comports():
+                    if p.vid == 0x239A or (p.vid, p.pid) == NORDIC_DFU_ID:
+                        continue   # noch im Bootloader
                     for key in (p.serial_number, (p.location or "").split(":")[0]):
                         r = waiting.pop(key, None) if key else None
                         if r:
@@ -2650,6 +2714,186 @@ def open_multiflash_window():
     go(0)
     src_id = settings.get("fw_last", {}).get("tracker", {}).get("source", "main")
     select_source(next((s for s in fw_sources() if s["id"] == src_id), fw_sources()[0]))
+
+# ---------- Nordic Serial DFU ("Open DFU Bootloader", z.B. Holyiot-/eByte-/Nordic-Dongle) ----------
+# Nachgebaut nach Nordics pc-nrfutil (BSD-Lizenz): nordicsemi/dfu/dfu_transport_serial.py, package.py,
+# nrfhex.py und dfu-cc.proto. Reines Python, damit es ohne nRF Connect/nrfutil unter Linux und Windows laeuft.
+NORDIC_DFU_ID = (0x1915, 0x521F)   # USB-Kennung des Nordic-Bootloaders
+
+class NordicDfuError(Exception):
+    pass
+
+NORDIC_RES = {0x00: "InvalidCode", 0x02: "NotSupported", 0x03: "InvalidParameter", 0x04: "InsufficientResources",
+              0x05: "InvalidObject", 0x06: "InvalidSignature", 0x07: "UnsupportedType",
+              0x08: "OperationNotPermitted", 0x0A: "OperationFailed"}
+NORDIC_EXT = {0x05: "Firmware-Version zu niedrig", 0x06: "Hardware-Version passt nicht",
+              0x07: "SoftDevice-Anforderung passt nicht", 0x08: "Signatur erforderlich",
+              0x0C: "Prüfsumme der Firmware passt nicht", 0x0D: "zu wenig Platz"}
+
+# Intel-HEX -> Binaerdaten wie nrfhex: ohne MBR (< 0x1000) und UICR (>= 0x10000000), Luecken 0xFF,
+# Laenge auf ganze 4-Byte-Woerter aufgerundet
+def hex_to_app_bin(path):
+    data, base = {}, 0
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line.startswith(":"):
+                continue
+            raw = bytes.fromhex(line[1:])
+            addr, rtype, payload = int.from_bytes(raw[1:3], "big"), raw[3], raw[4:4 + raw[0]]
+            if rtype == 0x00:
+                for i, b in enumerate(payload):
+                    data[base + addr + i] = b
+            elif rtype == 0x02:
+                base = int.from_bytes(payload, "big") << 4
+            elif rtype == 0x04:
+                base = int.from_bytes(payload, "big") << 16
+            elif rtype == 0x01:
+                break
+    data = {a: b for a, b in data.items() if 0x1000 <= a < 0x10000000}
+    if not data:
+        raise NordicDfuError("Die .hex-Datei enthält keine Anwendung")
+    lo, hi = min(data), max(data)
+    size = ((hi - lo + 1) + 3) // 4 * 4
+    out = bytearray(b"\xff" * size)
+    for a, b in data.items():
+        out[a - lo] = b
+    return bytes(out)
+
+def _varint(n):
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        out.append(b | (0x80 if n else 0))
+        if not n:
+            return bytes(out)
+
+def _field(num, wire, payload):
+    tag = _varint((num << 3) | wire)
+    return tag + (_varint(payload) if wire == 0 else _varint(len(payload)) + payload)
+
+# Init-Paket (dfu-cc.proto): Packet{command{op_code=INIT, init{...}}}, unsigniert wie fuer den offenen Bootloader
+def nordic_init_packet(app_bin, fw_version=1, hw_version=52, sd_req=(0x00,)):
+    digest = hashlib.sha256(app_bin).digest()[::-1]   # nrfutil legt den Hash byteweise umgedreht ab
+    hash_msg = _field(1, 0, 3) + _field(2, 2, digest)  # SHA256
+    init = (_field(1, 0, fw_version) + _field(2, 0, hw_version)
+            + _field(3, 2, b"".join(_varint(x) for x in sd_req))
+            + _field(4, 0, 0)            # APPLICATION
+            + _field(5, 0, 0) + _field(6, 0, 0) + _field(7, 0, len(app_bin))
+            + _field(8, 2, hash_msg) + _field(9, 0, 0))
+    command = _field(1, 0, 1) + _field(2, 2, init)   # op_code INIT
+    return _field(1, 2, command)
+
+def _slip(data):
+    out = bytearray()
+    for b in data:
+        out += b"\xdb\xdc" if b == 0xC0 else b"\xdb\xdd" if b == 0xDB else bytes([b])
+    return bytes(out + b"\xc0")
+
+class NordicDfu:
+    def __init__(self, port, progress=None):
+        self.ser = serial.Serial(port, 115200, rtscts=True, timeout=1.0)
+        self.progress = progress or (lambda done, total: None)
+        self.mtu = 0
+
+    def close(self):
+        try:
+            self.ser.close()
+        except Exception:
+            pass
+
+    def _read(self, timeout=5.0):
+        buf, esc, deadline = bytearray(), False, time.time() + timeout
+        while time.time() < deadline:
+            b = self.ser.read(1)
+            if not b:
+                continue
+            c = b[0]
+            if c == 0xC0:
+                if buf:
+                    return bytes(buf)
+                continue
+            if esc:
+                buf.append(0xC0 if c == 0xDC else 0xDB)
+                esc = False
+            elif c == 0xDB:
+                esc = True
+            else:
+                buf.append(c)
+        return None
+
+    def _cmd(self, payload, timeout=5.0):
+        self.ser.write(_slip(payload))
+        resp = self._read(timeout)
+        if not resp or resp[0] != 0x60 or resp[1] != payload[0]:
+            raise NordicDfuError(f"keine passende Antwort auf Befehl 0x{payload[0]:02X}")
+        if resp[2] == 0x0B:
+            raise NordicDfuError(NORDIC_EXT.get(resp[3], f"erweiterter Fehler 0x{resp[3]:02X}"), resp[3])
+        if resp[2] != 0x01:
+            raise NordicDfuError(NORDIC_RES.get(resp[2], f"Fehler 0x{resp[2]:02X}"))
+        return resp[3:]
+
+    def connect(self, timeout=10.0):
+        deadline, ping_id = time.time() + timeout, 0
+        while time.time() < deadline:
+            ping_id = (ping_id + 1) % 256
+            self.ser.write(_slip(bytes([0x09, ping_id])))
+            resp = self._read(1.0)
+            if resp and resp[:3] == bytes([0x60, 0x09, 0x01]) and resp[3:4] == bytes([ping_id]):
+                break
+        else:
+            raise NordicDfuError("Bootloader antwortet nicht")
+        self._cmd(bytes([0x02]) + struct.pack("<H", 0))            # PRN aus
+        self.mtu = struct.unpack("<H", self._cmd(bytes([0x07])))[0]
+
+    def _stream(self, data, crc, offset):
+        chunk = (self.mtu - 1) // 2 - 1
+        for i in range(0, len(data), chunk):
+            part = data[i:i + chunk]
+            self.ser.write(_slip(bytes([0x08]) + part))
+            crc = binascii.crc32(part, crc) & 0xFFFFFFFF
+            offset += len(part)
+        got_offset, got_crc = struct.unpack("<II", self._cmd(bytes([0x03])))
+        if got_offset != offset or got_crc != crc:
+            raise NordicDfuError("Prüfsumme der Übertragung stimmt nicht")
+        return crc, offset
+
+    def send(self, init_packet, app_bin):
+        max_size = struct.unpack("<III", self._cmd(bytes([0x06, 0x01])))[0]
+        if len(init_packet) > max_size:
+            raise NordicDfuError("Init-Paket zu groß")
+        self._cmd(bytes([0x01, 0x01]) + struct.pack("<L", len(init_packet)))
+        self._stream(init_packet, 0, 0)
+        self._cmd(bytes([0x04]))                                       # Init-Paket pruefen lassen
+        max_size = struct.unpack("<III", self._cmd(bytes([0x06, 0x02])))[0]
+        crc = 0
+        for i in range(0, len(app_bin), max_size):
+            obj = app_bin[i:i + max_size]
+            self._cmd(bytes([0x01, 0x02]) + struct.pack("<L", len(obj)))
+            crc, _ = self._stream(obj, crc, i)
+            self._cmd(bytes([0x04]), timeout=15.0)                     # Block ins Flash schreiben
+            self.progress(i + len(obj), len(app_bin))
+
+# Ganze Uebertragung: .hex -> Init-Paket + Daten -> Bootloader. Ist die Version zu niedrig (der Bootloader
+# verbietet Rueckschritte), einmal mit der hoechsten Version wiederholen.
+def nordic_flash_hex(port, hex_path, progress=None):
+    app_bin = hex_to_app_bin(hex_path)
+    for fw_version in (1, 0xFFFFFFFF):
+        dfu = NordicDfu(port, progress)
+        try:
+            dfu.connect()
+            dfu.send(nordic_init_packet(app_bin, fw_version=fw_version), app_bin)
+            return
+        except NordicDfuError as e:
+            if len(e.args) > 1 and e.args[1] == 0x05 and fw_version == 1:
+                continue
+            raise
+        finally:
+            dfu.close()
+
+def nordic_bootloader_ports():
+    return [p for p in serial.tools.list_ports.comports() if (p.vid, p.pid) == NORDIC_DFU_ID]
 
 # ---------- Geraeteverwaltung ----------
 # Uebersicht ueber alle bekannten Geraete. Firmware, Board, Sensor, Akku und Kopplung
