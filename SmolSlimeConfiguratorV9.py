@@ -15,6 +15,7 @@ import json
 import webbrowser
 import re
 import glob
+import urllib.parse
 from tkinter import filedialog
 import tkinter as tk
 import queue
@@ -35,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.18"
+APP_VERSION = "1.0.19"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -901,7 +902,8 @@ def populate_firmware_menu():
         firmware_urls = {"Custom (User provided .uf2 / .hex)": None}
 
 
-app.after(100, populate_firmware_menu)
+# populate_firmware_menu lief frueher bei jedem Start fuer die alte Leiste und verbrauchte
+# eine der 60 GitHub-API-Abfragen pro Stunde; es laeuft nur noch, wenn man die Quelle in Settings aendert.
 
 # Loading bar
 def animate_progress(target, step=0.02, interval=50):
@@ -1417,40 +1419,53 @@ def fw_sources():
                             "repo": f"{m.group(1)}/{m.group(2)}"})
     return sources
 
+# Die GitHub-API erlaubt ohne Anmeldung nur 60 Abfragen pro Stunde je Internetanschluss; alle Rechner
+# im Haus teilen sie sich. Die normalen Seiten (Weiterleitung, Release-Feed, Dateiliste) haben kein
+# solches Limit, deshalb kommt alles von dort.
+def fetch_release_assets(repo, tag):
+    response = requests.get(f"https://github.com/{repo}/releases/expanded_assets/{tag}", timeout=20)
+    response.raise_for_status()
+    assets = []
+    for part in response.text.split(f'href="/{repo}/releases/download/{tag}/')[1:]:
+        name = urllib.parse.unquote(part.split('"', 1)[0])
+        # Die offizielle CI laedt zusaetzlich Builds aus jitingcns Code hoch (..._JitingCat). Wer eine
+        # Quelle waehlt, bekommt nur deren eigene Firmware; jitingcn hat eine eigene Quelle.
+        if "jitingcat" in name.lower():
+            continue
+        # Bao steht nicht in der SlimeVR-Doku (die CI baut es aus einem Zusatz-Repo)
+        if re.search(r"(^|_)Bao(_|\.)", name):
+            continue
+        info = parse_fw_name(name)
+        if info:
+            date = re.search(r'datetime="(\d{4}-\d\d-\d\d)', part)
+            info["url"] = f"https://github.com/{repo}/releases/download/{tag}/{name}"
+            info["date"] = date.group(1) if date else ""
+            assets.append(info)
+    return assets
+
 def fetch_releases(repo):
     if repo in fw_release_cache:
         return fw_release_cache[repo]
-    response = requests.get(f"https://api.github.com/repos/{repo}/releases?per_page=20", timeout=15)
-    response.raise_for_status()
-    rels = response.json()
-    # Das stabile Release (bei Shine-Bright-Meow der Tag "latest" mit allen Varianten) steht vorn.
-    # Es wurde frueh angelegt und taucht unter den neuesten Tages-Builds sonst gar nicht auf.
-    try:
-        stable = requests.get(f"https://api.github.com/repos/{repo}/releases/latest", timeout=15)
-        if stable.ok:
-            stable = stable.json()
-            rels = [stable] + [r for r in rels if r.get("id") != stable.get("id")]
-    except Exception:
-        pass
-    releases = []
-    for rel in rels:
-        assets = []
-        for a in rel.get("assets", []):
-            # Die offizielle CI laedt zusaetzlich Builds aus jitingcns Code hoch (..._JitingCat). Wer eine
-            # Quelle waehlt, bekommt nur deren eigene Firmware; jitingcn hat eine eigene Quelle.
-            if "jitingcat" in a.get("name", "").lower():
-                continue
-            # Bao steht nicht in der SlimeVR-Doku (die CI baut es aus einem Zusatz-Repo)
-            if re.search(r"(^|_)Bao(_|\.)", a.get("name", "")):
-                continue
-            info = parse_fw_name(a.get("name", ""))
-            if info:
-                info["url"] = a.get("browser_download_url")
-                info["date"] = (a.get("updated_at") or "")[:10]
-                assets.append(info)
-        if assets:
-            releases.append({"tag": rel.get("tag_name", "?"), "assets": assets,
-                             "stable": not rel.get("prerelease", False)})
+    # Das stabile Release (bei Shine-Bright-Meow "latest" mit allen Varianten) steht vorn; es wurde frueh
+    # angelegt und taucht unter den neuesten Tages-Builds sonst gar nicht auf.
+    stable = ""
+    response = requests.get(f"https://github.com/{repo}/releases/latest", allow_redirects=False, timeout=15)
+    if response.status_code in (301, 302):
+        stable = response.headers.get("Location", "").rstrip("/").rsplit("/", 1)[-1]
+    tags = [stable] if stable else []
+    feed = requests.get(f"https://github.com/{repo}/releases.atom", timeout=15)
+    if feed.ok:
+        for tag in re.findall(r'/releases/tag/([^"<]+)"', feed.text):
+            tag = urllib.parse.unquote(tag)
+            if tag not in tags:
+                tags.append(tag)
+    releases = [{"tag": t, "stable": t == stable, "assets": None} for t in tags[:20]]
+    # Dateien gleich fuer das erste Release mit Firmware laden, die anderen erst bei Auswahl
+    while releases:
+        releases[0]["assets"] = fetch_release_assets(repo, releases[0]["tag"])
+        if releases[0]["assets"]:
+            break
+        releases.pop(0)
     fw_release_cache[repo] = releases
     return releases
 
@@ -1657,7 +1672,8 @@ def open_multiflash_window():
             else:
                 try:
                     rels, err = fetch_releases(src["repo"]), None
-                    rels = [dict(rel, assets=[dict(a, src=src, tag=rel["tag"]) for a in rel["assets"]]) for rel in rels]
+                    rels = [dict(rel, assets=None if rel["assets"] is None
+                                 else [dict(a, src=src, tag=rel["tag"]) for a in rel["assets"]]) for rel in rels]
                 except Exception as e:
                     rels, err = [], e
             ui(lambda: releases_loaded(src, rels, err))
@@ -1683,7 +1699,27 @@ def open_multiflash_window():
         select_version(labels[0])
 
     def select_version(label):
-        st["release"] = ver_map.get(label)
+        rel = ver_map.get(label)
+        src = st["source"]
+        if rel is not None and rel.get("assets") is None:
+            board_menu.configure(state="disabled")
+            board_menu.set("Lade…")
+
+            def work():
+                try:
+                    assets = [dict(a, src=src, tag=rel["tag"]) for a in fetch_release_assets(src["repo"], rel["tag"])]
+                except Exception as e:
+                    assets = []
+                    ui(lambda e=e: append_text(f"[Firmware-Tool] {src['repo']} {rel['tag']}: {e}\n", "error"))
+
+                def done():
+                    rel["assets"] = assets
+                    if st["source"] is src:
+                        select_version(label)
+                ui(done)
+            threading.Thread(target=work, daemon=True).start()
+            return
+        st["release"] = rel
         refresh_boards()
         if st.pop("auto_next", False) and st["board"]:
             go(1)   # "In allen Quellen suchen": gleich wieder zur Bauweise
