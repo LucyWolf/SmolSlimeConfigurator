@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.32"
+APP_VERSION = "1.0.33"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -378,6 +378,12 @@ class Device:
     def connected(self):
         return self.ser is not None and self.ser.is_open
 
+    # Nach dem Umflashen (Tracker <-> Dongle) bleibt die Seriennummer gleich, Name und Kennung aendern sich
+    def refresh(self, info):
+        self.port = info.device
+        self.product = info.product or info.description or self.product
+        self.usb_id = (info.vid, info.pid)
+
     def matches(self, info):
         if self.serial_number:
             return info.serial_number == self.serial_number
@@ -406,7 +412,7 @@ def make_console():
 def get_or_add_device(info):
     for dev in devices:
         if dev.matches(info):
-            dev.port = info.device
+            dev.refresh(info)
             return dev
     dev = Device(info)
     dev.number = 1 + sum(1 for d in devices if not d.is_receiver)
@@ -579,7 +585,7 @@ def watch_devices():
                 continue
             info = next((p for p in ports if dev.matches(p)), None)
             if info:
-                dev.port = info.device
+                dev.refresh(info)
                 connect_device(dev, ask=False, quiet=True)
     except Exception:
         pass
@@ -1115,6 +1121,10 @@ def list_tracker_ports():
     for p in serial.tools.list_ports.comports():
         if sys.platform.startswith("linux") and not ("ttyACM" in p.device or "ttyUSB" in p.device):
             continue
+        # Bootloader (UF2/Adafruit 239A, Nordic 1915:521F) sind keine Geraete zum Verbinden; die flasht
+        # Schritt 5 direkt ("Im Bootloader"). Sonst oeffnete die App denselben Anschluss doppelt.
+        if p.vid == 0x239A or (p.vid, p.pid) == NORDIC_DFU_ID:
+            continue
         name = p.product or p.description or ""
         found.append({
             "device": p.device,
@@ -1159,18 +1169,21 @@ def find_usb_drives():
         name = os.path.basename(blk)
         devs = ["/dev/" + name] + ["/dev/" + os.path.basename(x) for x in glob.glob(os.path.join(blk, name + "*"))]
         mount = next((mounts[d] for d in devs if d in mounts), None)
-        serial_no = ""
+        serial_no, vid = "", ""
         up = real
         while up not in ("/", ""):
-            if os.path.isfile(os.path.join(up, "idVendor")) and os.path.isfile(os.path.join(up, "serial")):
+            if os.path.isfile(os.path.join(up, "idVendor")):
                 try:
+                    with open(os.path.join(up, "idVendor")) as f:
+                        vid = f.read().strip().lower()
                     with open(os.path.join(up, "serial")) as f:
                         serial_no = f.read().strip()
                 except Exception:
                     pass
                 break
             up = os.path.dirname(up)
-        drives[name] = {"devs": devs, "location": locs[-1] if locs else "", "mount": mount, "serial": serial_no}
+        drives[name] = {"devs": devs, "location": locs[-1] if locs else "", "mount": mount, "serial": serial_no,
+                        "vid": vid}
     return drives
 
 # Geraete, die schon im UF2-Bootloader stecken (manueller DFU, oder ohne startfaehige Firmware):
@@ -2301,10 +2314,22 @@ def open_multiflash_window():
     b_conn.pack(side="left", padx=5)
     ToolTip(b_add, "Weiteres Gerät hinzufügen")
     ToolTip(b_all, "Alle angesteckten Geräte dieses Typs übernehmen")
+    boot_info = ctk.CTkLabel(f3, text="", anchor="w", text_color="orange")
+    boot_info.grid(row=3, column=0, sticky="w", padx=6, pady=(6, 0))
     next3_btn = nav(f3, 2, next_cmd=lambda: go(3))
 
+    # Geraete, die schon im Bootloader stecken (ohne Einhaengen gezaehlt): die flasht Schritt 5 direkt
+    def bootloader_count():
+        if st.get("asset") and st["asset"].get("ext") == "hex":
+            return len(nordic_bootloader_ports())
+        if sys.platform.startswith("linux"):
+            return sum(1 for d in find_usb_drives().values() if d.get("vid") == "239a")
+        return len(uf2_drive_roots())
+
     def update_next3():
-        next3_btn.configure(state="normal" if valid_targets() else "disabled")
+        n = bootloader_count()
+        boot_info.configure(text=f"{n} Gerät(e) im Bootloader – werden in Schritt 5 direkt mitgeflasht" if n else "")
+        next3_btn.configure(state="normal" if valid_targets() or n else "disabled")
 
     def enter_devices():
         for r in list(rows):
@@ -2562,6 +2587,11 @@ def open_multiflash_window():
                 return result.get("ok", False)
 
             def flash_nordic(r, port, retried=False):
+                for d in devices:
+                    if d.port == port:
+                        d.paused = True
+                        disconnect_device(d)
+
                 def prog(done, total):
                     ui(lambda: set_status(r, f"überträgt … {done * 100 // total} %"))
                 try:
@@ -2603,11 +2633,14 @@ def open_multiflash_window():
                 return flash_nordic(r, port)
 
             # Geraete, die schon im Bootloader stecken: Datei direkt aufs Laufwerk bzw. per Nordic-DFU
+            confirmed = set()
             for i, r in enumerate(pre):
                 key = r["drive"]["serial"] or r["drive"]["location"] or f"boot{i}"
                 if r.get("nordic"):
                     if flash_nordic(r, r["nordic"]):
                         found[key] = r
+                        confirmed.add(key)
+                        ui(lambda rr=r: set_status(rr, "fertig ✅ (vom Bootloader geprüft)", "green"))
                 else:
                     found[key] = r
                     copy_one(r, r["drive"]["root"])
@@ -2672,7 +2705,7 @@ def open_multiflash_window():
                         time.sleep(0.5)
 
             # Erfolg = das Geraet meldet sich mit neuer Firmware wieder als Port
-            waiting = dict(found)
+            waiting = {k: r for k, r in found.items() if k not in confirmed}
             deadline = time.time() + 30
             while waiting and time.time() < deadline:
                 for p in serial.tools.list_ports.comports():
@@ -2848,9 +2881,12 @@ class NordicDfu:
                 buf.append(c)
         return None
 
-    def _cmd(self, payload, timeout=5.0):
+    def _cmd(self, payload, timeout=5.0, size=None):
         self.ser.write(_slip(payload))
         resp = self._read(timeout)
+        if size is not None and resp and resp[2:3] == b"\x01" and len(resp) - 3 != size:
+            raise NordicDfuError(f"unerwartete Antwort auf Befehl 0x{payload[0]:02X} – liest ein anderes Programm "
+                                 "am Anschluss mit?")
         if not resp or resp[0] != 0x60 or resp[1] != payload[0]:
             raise NordicDfuError(f"keine passende Antwort auf Befehl 0x{payload[0]:02X}")
         if resp[2] == 0x0B:
@@ -2870,7 +2906,7 @@ class NordicDfu:
         else:
             raise NordicDfuError("Bootloader antwortet nicht")
         self._cmd(bytes([0x02]) + struct.pack("<H", 0))            # PRN aus
-        self.mtu = struct.unpack("<H", self._cmd(bytes([0x07])))[0]
+        self.mtu = struct.unpack("<H", self._cmd(bytes([0x07]), size=2))[0]
 
     def _stream(self, data, crc, offset):
         chunk = (self.mtu - 1) // 2 - 1
@@ -2879,19 +2915,19 @@ class NordicDfu:
             self.ser.write(_slip(bytes([0x08]) + part))
             crc = binascii.crc32(part, crc) & 0xFFFFFFFF
             offset += len(part)
-        got_offset, got_crc = struct.unpack("<II", self._cmd(bytes([0x03])))
+        got_offset, got_crc = struct.unpack("<II", self._cmd(bytes([0x03]), size=8))
         if got_offset != offset or got_crc != crc:
             raise NordicDfuError("Prüfsumme der Übertragung stimmt nicht")
         return crc, offset
 
     def send(self, init_packet, app_bin):
-        max_size = struct.unpack("<III", self._cmd(bytes([0x06, 0x01])))[0]
+        max_size = struct.unpack("<III", self._cmd(bytes([0x06, 0x01]), size=12))[0]
         if len(init_packet) > max_size:
             raise NordicDfuError("Init-Paket zu groß")
         self._cmd(bytes([0x01, 0x01]) + struct.pack("<L", len(init_packet)))
         self._stream(init_packet, 0, 0)
         self._cmd(bytes([0x04]))                                       # Init-Paket pruefen lassen
-        max_size = struct.unpack("<III", self._cmd(bytes([0x06, 0x02])))[0]
+        max_size = struct.unpack("<III", self._cmd(bytes([0x06, 0x02]), size=12))[0]
         crc = 0
         for i in range(0, len(app_bin), max_size):
             obj = app_bin[i:i + max_size]
