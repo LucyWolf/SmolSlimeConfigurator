@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 STEPS=$1; OUT=$(realpath -m "$2"); mkdir -p "$OUT"
 docker image inspect smolslime-test >/dev/null 2>&1 || docker build -q -t smolslime-test -f tools/test.Dockerfile tools
 docker run --rm -v "$PWD":/src:ro -v "$OUT":/out -v "$(realpath "$STEPS")":/steps.py:ro smolslime-test bash -c '
-  mkdir -p /w /tmp/cfg && cp /src/icon.png /w/
+  mkdir -p /w /tmp/cfg && cp /src/icon.png /w/ && cp -r /src/assets /w/
   { sed "/^app.mainloop()/d" /src/SmolSlimeConfiguratorV9.py; cat /src/tools/gui_helpers.py /steps.py; echo "app.mainloop()"; } > /w/run.py
   cd /w && XDG_CONFIG_HOME=/tmp/cfg timeout 120 xvfb-run -a -s "-screen 0 1400x1000x24" python run.py 2>&1 | grep -v Fontconfig || true
   chown -R '"$(id -u):$(id -g)"' /out'

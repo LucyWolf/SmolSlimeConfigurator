@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.21"
+APP_VERSION = "1.0.22"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1340,11 +1340,38 @@ FW_DIM = ("gray35", "gray65")
 fw_release_cache = {}
 
 # Erklaerungen stehen hinter einem ?-Knopf, damit die Seite uebersichtlich bleibt
-def label_with_help(parent, row, text, help_text, bold=False, padx=12):
+# Bilder zu den Bauformen (assets/bauform/<datei>), werden unter dem "?" mit angezeigt
+FW_VARIANT_IMAGES = [("Stacked Smol", "stacked.png"), ("Chrysalis", "chrysalis.png"), ("Normal (Non-Stacked)", "normal.png")]
+
+def bauform_images(parent):
+    row = ctk.CTkFrame(parent, fg_color="transparent")
+    for caption, fname in FW_VARIANT_IMAGES:
+        path = resource_path(os.path.join("assets", "bauform", fname))
+        if not os.path.isfile(path):
+            continue
+        try:
+            img = tk.PhotoImage(file=path)
+        except tk.TclError:
+            continue
+        factor = max(1, -(-img.width() // 220))   # auf hoechstens ~220 px Breite verkleinern
+        img = img.subsample(factor, factor)
+        cell = ctk.CTkFrame(row, fg_color="transparent")
+        cell.pack(side="left", padx=(0, 16), anchor="n")
+        pic = tk.Label(cell, image=img, borderwidth=0, highlightthickness=0)
+        pic.image = img   # Referenz halten, sonst raeumt Tk das Bild weg
+        pic.pack()
+        ctk.CTkLabel(cell, text=caption, text_color=FW_DIM).pack()
+    return row
+
+def label_with_help(parent, row, text, help_text, bold=False, padx=12, images=None):
     head = ctk.CTkFrame(parent, fg_color="transparent")
     ctk.CTkLabel(head, text=text, anchor="w",
                  font=ctk.CTkFont(weight="bold") if bold else None).pack(side="left")
-    help_l = ctk.CTkLabel(parent, text=help_text, anchor="w", justify="left", wraplength=640, text_color=FW_DIM)
+    help_l = ctk.CTkFrame(parent, fg_color="transparent")
+    ctk.CTkLabel(help_l, text=help_text, anchor="w", justify="left", wraplength=640,
+                 text_color=FW_DIM).pack(anchor="w")
+    if images:
+        images(help_l).pack(anchor="w", pady=(6, 0))
     help_l.grid(row=row + 1, column=0, columnspan=3, sticky="w", padx=padx, pady=(2, 4))
     help_l.grid_remove()
 
@@ -1896,7 +1923,8 @@ def open_multiflash_window():
                 continue
             current = next((t for t in base if t in toks), None)
             names = FW_CHOICE_LABELS.get(key, {})
-            label_with_help(box, r, label, FW_OPTION_HELP.get(key, ""), bold=True).grid(
+            label_with_help(box, r, label, FW_OPTION_HELP.get(key, ""), bold=True,
+                            images=bauform_images if key == "variant" else None).grid(
                 row=r, column=0, sticky="nw", padx=12, pady=(10, 0))
             if len(toks) == 1:
                 var = tk.BooleanVar(value=current is not None)

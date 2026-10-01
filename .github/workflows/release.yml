@@ -30,7 +30,7 @@ jobs:
           pip install -q pyinstaller customtkinter pyserial requests
       - name: Bauen
         run: |
-          pyinstaller --onefile --windowed --add-data "icon.png:." --add-binary "bin/nrfutil:." \
+          pyinstaller --onefile --windowed --add-data "icon.png:." --add-data "assets:assets" --add-binary "bin/nrfutil:." \
             --name SmolSlimeConfigurator-Linux SmolSlimeConfiguratorV9.py
           ls -l dist
       - name: Selbsttest
@@ -54,7 +54,7 @@ jobs:
       - name: Bauen
         shell: bash
         run: |
-          pyinstaller --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." \
+          pyinstaller --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." --add-data "assets;assets" \
             --name SmolSlimeConfigurator-Windows SmolSlimeConfiguratorV9.py
           ls -l dist
       - name: Selbsttest
