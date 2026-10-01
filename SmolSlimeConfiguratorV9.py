@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.35"
+APP_VERSION = "1.0.36"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1698,6 +1698,8 @@ def open_multiflash_window(role=None):
 
     src_cards = {}
     for src in fw_sources():
+        if src["id"] == "all":
+            continue   # keine eigene Karte; nur ueber "In allen Quellen suchen" erreichbar
         card = ctk.CTkFrame(col_src, fg_color=FW_CARD2, corner_radius=8, border_width=2, border_color=FW_CARD2)
         card.pack(fill="x", padx=8, pady=4)
         t = ctk.CTkLabel(card, text=src["name"], anchor="w", font=ctk.CTkFont(weight="bold"))
@@ -1998,7 +2000,7 @@ def open_multiflash_window(role=None):
                                  text_color=("green", "lime"))
                 nxt.configure(state="normal")
             else:
-                tip = "" if st["source"]["id"] == "all" else "\n      Tipp: Unter „Alle Quellen“ gibt es mehr Kombinationen."
+                tip = "" if st["source"]["id"] == "all" else "\n      Tipp: „In allen Quellen suchen“ findet oft mehr Kombinationen."
                 result.configure(text="❌  Diese Kombination gibt es in dieser Version nicht." + tip, text_color="red")
                 nxt.configure(state="disabled")
             apply_led_visibility()
@@ -2785,7 +2787,7 @@ def open_multiflash_window(role=None):
     if role:
         set_role(role)
     src_id = settings.get("fw_last", {}).get(st["role"], {}).get("source", "main")
-    select_source(next((s for s in fw_sources() if s["id"] == src_id), fw_sources()[0]))
+    select_source(next((s for s in fw_sources() if s["id"] == src_id and s["id"] != "all"), fw_sources()[0]))
 
 # ---------- Nordic Serial DFU ("Open DFU Bootloader", z.B. Holyiot-/eByte-/Nordic-Dongle) ----------
 # Nachgebaut nach Nordics pc-nrfutil (BSD-Lizenz): nordicsemi/dfu/dfu_transport_serial.py, package.py,
