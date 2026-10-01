@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1206,7 +1206,8 @@ FW_SOURCES = [
 
 FW_OPTION_GROUPS = [
     ("variant", "Bauform", ["StackedSmol", "Chrysalis", "Bao"]),
-    ("bus", "Sensor-Anschluss", ["SPI", "I2C", "smSPI"]),
+    ("bus", "Sensor-Anschluss", ["SPI", "I2C"]),
+    ("pins", "smSPI-Belegung", ["SmolPins"]),
     ("mag", "Magnetometer", ["Mag"]),
     ("clk", "Sensor-Takt (CLKIN/INT2)", ["CLK"]),   # an/aus; NoCLK wird beim Einlesen umgerechnet
     ("sleep", "Schlafmodus (WOM)", ["Sleep"]),   # an/aus; NoSleep wird beim Einlesen umgerechnet
@@ -1224,8 +1225,9 @@ FW_OPTION_HELP = {
                "selbst mit Kabeln verdrahtet: „Platinen-Standard“.",
     "bus": "Wie der Bewegungssensor mit dem Controller verbunden ist. SPI ist schneller und weniger störanfällig "
            "und wird deshalb empfohlen. I2C braucht weniger Drähte und funktioniert auch. Wichtig: Die Wahl muss "
-           "zu deiner Verdrahtung passen, sonst wird der Sensor nicht gefunden. „SPI (Smol-Belegung)“ ist SPI mit "
-           "anderer Pin-Belegung – nur wählen, wenn dein Schaltplan das so vorgibt.",
+           "zu deiner Verdrahtung passen, sonst wird der Sensor nicht gefunden.",
+    "pins": "Nur bei SPI: eine andere Pinbelegung, bei der CS an P0.24 und INT an P1.00 liegen. Nur wählen, "
+            "wenn dein Schaltplan das so vorgibt – sonst bleibt der Haken aus.",
     "mag": "Ein Magnetometer ist ein Kompass-Sensor. Er verhindert, dass sich die Drehung des Trackers mit der Zeit "
            "langsam verschiebt (Drift). Nur einschalten, wenn wirklich einer verbaut ist. In der Nähe von Metall, "
            "Magneten oder Lautsprechern kann er stören.",
@@ -1247,7 +1249,7 @@ FW_OPTION_HELP = {
 }
 
 FW_CHOICE_LABELS = {
-    "bus": {"SPI": "SPI (empfohlen)", "I2C": "I2C", "smSPI": "SPI (Smol-Belegung)", None: "Platinen-Standard"},
+    "bus": {"SPI": "SPI (empfohlen)", "I2C": "I2C"},
     "variant": {"StackedSmol": "Stacked Smol", None: "Platinen-Standard"},
 }
 
@@ -1357,7 +1359,7 @@ def label_with_help(parent, row, text, help_text, bold=False, padx=12):
 # Zwei Namensschemata: SlimeNRF_Tracker_SPI_Mag_ProMicro (CI) und
 # SlimeNRF_ProMicro_StackedSmol_Tracker_I2C bzw. Aero_Tracker_Pro (jitingcn).
 # Bekannte Optionen werden herausgezogen, der Rest ist das Board.
-FW_TOKEN_ALIASES = {t.lower(): t for t in (FW_OPTION_TOKENS - {"Sleep"}) | {"NoCLK", "NoSleep"}}
+FW_TOKEN_ALIASES = {t.lower(): t for t in (FW_OPTION_TOKENS - {"Sleep", "SmolPins"}) | {"NoCLK", "NoSleep", "smSPI"}}
 
 def parse_fw_name(name):
     base, _, ext = name.rpartition(".")
@@ -1383,6 +1385,14 @@ def parse_fw_name(name):
     opts -= {"CLK", "NoCLK"}
     if clk_on:
         opts.add("CLK")
+    # Sensor-Anschluss nur SPI oder I2C. Ohne Angabe ist der ProMicro (auch Chrysalis) I2C, Bao ist SPI;
+    # smSPI ist SPI mit anderer Pinbelegung. Unbekannt bleibt es nur bei den Stacked-Smol-Sondervarianten.
+    if "smSPI" in opts:
+        opts -= {"smSPI"}
+        opts |= {"SPI", "SmolPins"}
+    elif not opts & {"SPI", "I2C"} and any(t.lower() == "promicro" for t in rest) \
+            and not any(t.startswith("StackedSmol_") for t in rest):
+        opts.add("SPI" if any(t.lower() == "bao" for t in rest) else "I2C")
     # Schlafmodus ebenso als an/aus: "NoSleep" im Namen heisst aus, sonst an
     if "NoSleep" in opts:
         opts.discard("NoSleep")
@@ -1538,6 +1548,13 @@ def open_multiflash_window():
                              fg_color=FW_PURPLE if src["badge"] == "Offiziell" else FW_SLATE,
                              text_color="white", font=ctk.CTkFont(size=11))
         badge.pack(side="right")
+        if src["repo"] not in (None, "*"):
+            # GitHub-Seite der Quelle im Browser, zum selbst Nachlesen
+            link = ctk.CTkButton(card, text="↗", width=26, height=22, corner_radius=6, fg_color=FW_SLATE,
+                                 hover_color=FW_PURPLE, text_color="white",
+                                 command=lambda r=src["repo"]: webbrowser.open(f"https://github.com/{r}"))
+            link.place(relx=1.0, x=-8, y=6, anchor="ne")
+            ToolTip(link, f"github.com/{src['repo']} im Browser öffnen")
         for w in (card, t, line, o, badge):
             w.bind("<Button-1>", lambda e, s=src: select_source(s))
         src_cards[src["id"]] = card
@@ -1751,7 +1768,10 @@ def open_multiflash_window():
                 elif not tok and var.get():
                     chosen.add(var.get())
             order = [s["id"] for s in fw_sources()]
-            match = sorted((a for a in assets if a["options"] == chosen),
+            def fits(a):
+                o = a["options"]
+                return o == chosen or (not o & {"SPI", "I2C"} and o == chosen - {"SPI", "I2C"})
+            match = sorted((a for a in assets if fits(a)),
                            key=lambda a: (a["ext"] != "uf2", order.index(a["src"]["id"]) if a["src"]["id"] in order else 99))
             st["asset"] = match[0] if match else None
             if match:
@@ -1781,7 +1801,7 @@ def open_multiflash_window():
                 toks = toks + sorted({t for o in sets for t in o if t.startswith("StackedSmol_")})
             present = [t for t in toks if any(t in s for s in sets)]
             has_none = any(not (s & set(toks)) for s in sets)
-            choices = present + ([None] if has_none else [])
+            choices = present + ([None] if has_none and key != "bus" else [])
             if len(choices) < 2 and not (key == "bus" and present):
                 continue
             current = next((t for t in base if t in toks), None)
@@ -1798,7 +1818,7 @@ def open_multiflash_window():
                 fr = ctk.CTkFrame(box, fg_color="transparent")
                 fr.grid(row=r, column=1, sticky="w", pady=(10, 0))
                 # Beim Sensor-Anschluss auch zeigen, was diese Quelle nicht hat, damit die Wahl sichtbar bleibt
-                shown = choices + ([t for t in toks if t not in present and t != "smSPI"] if key == "bus" else [])
+                shown = choices + ([t for t in toks if t not in present] if key == "bus" else [])
                 for i, t in enumerate(shown):
                     available = t in choices
                     text = names.get(t) or (f"Stacked Smol ({t[12:]})" if t and t.startswith("StackedSmol_") else t)
