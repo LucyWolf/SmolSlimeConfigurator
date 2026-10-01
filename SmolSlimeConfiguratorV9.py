@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.13"
+APP_VERSION = "1.0.14"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1665,6 +1665,8 @@ def open_multiflash_window():
     def select_version(label):
         st["release"] = ver_map.get(label)
         refresh_boards()
+        if st.pop("auto_next", False) and st["board"]:
+            go(1)   # "In allen Quellen suchen": gleich wieder zur Bauweise
 
     def set_board(board):
         st["board"] = board
@@ -1790,6 +1792,17 @@ def open_multiflash_window():
             if not match:
                 suggest.pack(fill="x")
                 near = sorted({a["options"] for a in assets}, key=lambda o: (len(o ^ chosen), len(o), sorted(o)))[:3]
+                if st["source"]["id"] != "all":
+                    # Andere Quellen bauen oft mehr (z.B. Stacked Smol mit I2C nur kounocom/jitingcn)
+                    def search_all(chosen=frozenset(chosen)):
+                        settings.setdefault("fw_last", {})[st["role"]] = {
+                            "source": "all", "board": st["board"], "options": sorted(chosen)}
+                        st["auto_next"] = True
+                        go(0)
+                        select_source(next(x for x in fw_sources() if x["id"] == "all"))
+                    ctk.CTkButton(suggest, text="🔍 In allen Quellen suchen", fg_color=FW_PURPLE,
+                                  hover_color=FW_PURPLE_H, text_color="white",
+                                  command=search_all).pack(anchor="w", pady=(6, 2))
                 ctk.CTkLabel(suggest, text="Am nächsten dran gibt es:", anchor="w").pack(fill="x", pady=(6, 2))
                 for opts in near:
                     ctk.CTkButton(suggest, text=describe(chosen, opts), anchor="w",
