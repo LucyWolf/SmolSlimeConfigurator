@@ -1343,8 +1343,22 @@ fw_release_cache = {}
 # Bilder zu den Bauformen (assets/bauform/<datei>), werden unter dem "?" mit angezeigt
 FW_VARIANT_IMAGES = [("Stacked Smol", "stacked.png"), ("Chrysalis", "chrysalis.png"), ("Normal (Non-Stacked)", "normal.png")]
 
+# Bild in voller Groesse (Schaltplaene sind klein kaum lesbar)
+def show_big_image(path, caption):
+    win = ctk.CTkToplevel(app)
+    win.title(caption)
+    img = tk.PhotoImage(file=path)
+    pic = tk.Label(win, image=img, borderwidth=0, highlightthickness=0, cursor="hand2")
+    pic.image = img
+    pic.pack(padx=8, pady=8)
+    pic.bind("<Button-1>", lambda e: win.destroy())
+    win.after(100, win.focus)
+
 def bauform_images(parent):
-    row = ctk.CTkFrame(parent, fg_color="transparent")
+    outer = ctk.CTkFrame(parent, fg_color="transparent")
+    row = ctk.CTkFrame(outer, fg_color="transparent")
+    row.pack(anchor="w")
+    shown = 0
     for caption, fname in FW_VARIANT_IMAGES:
         path = resource_path(os.path.join("assets", "bauform", fname))
         if not os.path.isfile(path):
@@ -1360,8 +1374,14 @@ def bauform_images(parent):
         pic = tk.Label(cell, image=img, borderwidth=0, highlightthickness=0)
         pic.image = img   # Referenz halten, sonst raeumt Tk das Bild weg
         pic.pack()
+        pic.configure(cursor="hand2")
+        pic.bind("<Button-1>", lambda e, p=path, c=caption: show_big_image(p, c))
         ctk.CTkLabel(cell, text=caption, text_color=FW_DIM).pack()
-    return row
+        shown += 1
+    if shown:
+        ctk.CTkLabel(outer, text="Schaltpläne: SlimeVR-Doku (MIT-Lizenz)", text_color=FW_DIM,
+                     font=ctk.CTkFont(size=11)).pack(anchor="w")
+    return outer
 
 def label_with_help(parent, row, text, help_text, bold=False, padx=12, images=None):
     head = ctk.CTkFrame(parent, fg_color="transparent")
