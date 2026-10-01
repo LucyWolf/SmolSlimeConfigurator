@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.24"
+APP_VERSION = "1.0.25"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -2109,9 +2109,10 @@ def open_multiflash_window():
         reset = setting_widgets["__reset__"].get()
         if reset:
             cmds.append("reset_config all")
-        for name, (kind, w, factor) in setting_widgets.items():
-            if name == "__reset__":
+        for name, entry in setting_widgets.items():
+            if name == "__reset__":   # ist nur das Kaestchen "vorher zuruecksetzen", kein (Art, Widget, Faktor)
                 continue
+            kind, w, factor = entry
             if kind == "bool":
                 v = w.get()
                 if v in ("An", "Aus"):
@@ -2315,6 +2316,29 @@ def open_multiflash_window():
         start.pack(side="right")
         flash_ctl.update(info=info, start=start, back=back)
 
+        # Solange nicht geflasht wird: pruefen, ob die Geraete noch dran sind (abgezogen -> Fehler statt nichts)
+        def watch():
+            if not f5.winfo_exists() or cur["i"] != 4 or st["busy"] or not start.winfo_exists():
+                return
+            gone = [r for r in targets if not r["dev"].connected]
+            for r in targets:
+                if r.get("status2") is not None and r["status2"].winfo_exists():
+                    ok = r["dev"].connected
+                    r["status2"].configure(text=f"{device_name(r['dev'])}: {'bereit' if ok else 'getrennt – abgezogen?'}",
+                                           text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"] if ok else "red")
+            if not targets or len(gone) == len(targets):
+                info.configure(text="Kein Gerät verbunden – Gerät anstecken und in Schritt 3 verbinden.",
+                               text_color="red")
+                start.configure(state="disabled")
+            else:
+                if gone:
+                    info.configure(text=f"{len(gone)} Gerät(e) getrennt, die werden übersprungen.", text_color="orange")
+                else:
+                    info.configure(text="", text_color=FW_DIM)
+                start.configure(state="normal")
+            win.after(1000, watch)
+        watch()
+
     def remember_choice():
         if st["source"]["repo"] is None:
             return
@@ -2324,7 +2348,9 @@ def open_multiflash_window():
         save_settings()
 
     def flash_start(targets):
+        targets = [r for r in targets if r["dev"] and r["dev"].connected]   # inzwischen abgezogene auslassen
         if st["busy"] or not targets:
+            flash_ctl["info"].configure(text="Kein Gerät verbunden.", text_color="red")
             return
         cmds, err = collect_settings()
         if err:

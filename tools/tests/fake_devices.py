@@ -28,7 +28,10 @@ def fake_device(product, serial_no, info_lines, cfg=None):
                 for o in out:
                     os.write(master, (o + "\r\n").encode())
     threading.Thread(target=loop, daemon=True).start()
-    return types.SimpleNamespace(device=os.ttyname(slave), serial_number=serial_no, location="", product=product,
+    # Die App nimmt unter Linux nur Anschluesse namens ttyACM*; daher ein passender Verweis
+    link = f"/tmp/ttyACM{len(glob.glob('/tmp/ttyACM*'))}"
+    os.symlink(os.ttyname(slave), link)
+    return types.SimpleNamespace(device=link, serial_number=serial_no, location="", product=product,
                                  description=product, vid=0x1209, pid=0x7692 if "Tracker" in product else 0x7690)
 
 FAKE_DONGLE = fake_device("SlimeNRF Receiver Holyiot-21017", "C7F52BB73A4A4882",
