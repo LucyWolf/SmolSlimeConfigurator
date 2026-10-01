@@ -1051,6 +1051,102 @@ def mount_drive(drive):
 
 multi_win = None
 
+# Firmware-Tool im Stil des SlimeVR-Servers: Quelle -> Board -> Version ->
+# Bauweise -> Geraete -> Flash-Methode -> Flashen. Board und Bauweise stehen
+# im Dateinamen, z.B. SlimeNRF_Tracker_TDMA_NoSleep_SPI_Mag_ProMicro.uf2.
+FW_SOURCES = [
+    {"id": "main", "name": "SlimeNRF-Firmware-CI", "owner": "Shine-Bright-Meow", "badge": "Offiziell",
+     "repo": "Shine-Bright-Meow/SlimeNRF-Firmware-CI"},
+    {"id": "kounocom", "name": "SlimeNRF-Firmware-CI", "owner": "kounocom", "badge": "Drittanbieter",
+     "repo": "kounocom/SlimeNRF-Firmware-CI"},
+    {"id": "jitingcn", "name": "SlimeVR-Tracker-nRF", "owner": "jitingcn", "badge": "Drittanbieter",
+     "repo": "jitingcn/SlimeVR-Tracker-nRF"},
+    {"id": "file", "name": "Eigene Datei", "owner": ".uf2 vom Rechner", "badge": "Datei", "repo": None},
+]
+
+FW_OPTION_GROUPS = [
+    ("variant", "Bauform", ["Chrysalis", "Bao"]),
+    ("bus", "Sensor-Anschluss", ["SPI", "I2C", "smSPI"]),
+    ("mag", "Magnetometer", ["Mag"]),
+    ("clk", "Externer Takt", ["CLK", "NoCLK", "NoSleepCLK"]),
+    ("sleep", "Schlafmodus aus", ["NoSleep"]),
+    ("sw0", "Taster an SW0", ["SW0"]),
+    ("tdma", "Funkmodus TDMA", ["TDMA"]),
+    ("data", "Datensammlung (CDC)", ["DataCollect"]),
+]
+FW_OPTION_TOKENS = {t for _, _, toks in FW_OPTION_GROUPS for t in toks}
+
+FW_BG = ("#e9eef5", "#0b1724")
+FW_CARD = ("#dce4ee", "#0f2133")
+FW_CARD2 = ("#cfd9e5", "#16304a")
+FW_PURPLE = "#7c4dcc"
+FW_PURPLE_H = "#6a3fb5"
+FW_SLATE = ("#8fa1b5", "#34506b")
+FW_GREEN = "#2e9e5b"
+FW_DIM = ("gray35", "gray65")
+
+fw_release_cache = {}
+
+# Zwei Namensschemata: SlimeNRF_Tracker_SPI_Mag_ProMicro (CI) und
+# SlimeNRF_ProMicro_StackedSmol_Tracker_I2C bzw. Aero_Tracker_Pro (jitingcn).
+# Bekannte Optionen werden herausgezogen, der Rest ist das Board.
+FW_TOKEN_ALIASES = {t.lower(): t for t in FW_OPTION_TOKENS}
+
+def parse_fw_name(name):
+    base, _, ext = name.rpartition(".")
+    if ext not in ("uf2", "hex") or not base:
+        return None
+    tokens = [t for t in base.replace("DataCollect_CDC", "DataCollect").split("_") if t]
+    role = "dongle" if any(t.lower() == "receiver" for t in tokens) else "tracker"
+    rest = [t for t in tokens if t.lower() not in ("slimenrf", "tracker", "receiver", "uf2", "hex")]
+    return {
+        "role": role,
+        "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES) or "Standard",
+        "options": frozenset(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES),
+        "ext": ext,
+        "name": name,
+    }
+
+def fw_sources():
+    sources = list(FW_SOURCES)
+    m = re.search(r"repos/([^/]+)/([^/]+)", settings.get("custom_firmware_repo", "") or "")
+    if m:
+        sources.insert(-1, {"id": "custom", "name": m.group(2), "owner": m.group(1), "badge": "Eigene",
+                            "repo": f"{m.group(1)}/{m.group(2)}"})
+    return sources
+
+def fetch_releases(repo):
+    if repo in fw_release_cache:
+        return fw_release_cache[repo]
+    response = requests.get(f"https://api.github.com/repos/{repo}/releases?per_page=20", timeout=15)
+    response.raise_for_status()
+    releases = []
+    for rel in response.json():
+        assets = []
+        for a in rel.get("assets", []):
+            info = parse_fw_name(a.get("name", ""))
+            if info:
+                info["url"] = a.get("browser_download_url")
+                assets.append(info)
+        if assets:
+            releases.append({"tag": rel.get("tag_name", "?"), "assets": assets})
+    fw_release_cache[repo] = releases
+    return releases
+
+def norm_name(s):
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+# "SlimeNRF Tracker ProMicro" -> ProMicro, "SlimeNRF Receiver Holyiot-21017" -> Holyiot_Dongle
+def guess_board(product, boards):
+    p = norm_name(product)
+    for b in sorted(boards, key=len, reverse=True):
+        if norm_name(b) in p:
+            return b
+    for b in boards:
+        if norm_name(b.split("_")[0]) in p:
+            return b
+    return None
+
 def open_multiflash_window():
     global multi_win
     if not sys.platform.startswith("linux"):
@@ -1060,69 +1156,301 @@ def open_multiflash_window():
         multi_win.focus()
         return
 
-    win = ctk.CTkToplevel(app)
+    win = ctk.CTkToplevel(app, fg_color=FW_BG)
     multi_win = win
-    win.title("Geräteverwaltung")
-    win.geometry("700x720")
+    win.title("Geräteverwaltung – Tracker")
+    win.geometry("880x780")
     win.transient(app)
 
+    st = {"source": None, "releases": [], "release": None, "role": "tracker", "board": None,
+          "asset": None, "file": None, "busy": False}
+    ver_map = {}
+    board_map = {}
     rows = []
     label_to_port = {}
-    dongle_fw_var = tk.StringVar(value="Select Firmware")
     clear_var = tk.BooleanVar(value=False)
-    busy = {"on": False}
+    cur = {"i": 0}
+    steps = []
 
     def ui(fn):
         app.after(0, fn)
 
-    # Firmware: Tracker und Dongle brauchen verschiedene Dateien
-    fw_frame = ctk.CTkFrame(win)
-    fw_frame.pack(fill="x", padx=10, pady=(10, 5))
+    head = ctk.CTkFrame(win, fg_color="transparent")
+    head.pack(fill="x", padx=20, pady=(16, 4))
+    ctk.CTkLabel(head, text="Firmware-Tool", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+    ctk.CTkLabel(head, text="Tracker konfigurieren und flashen", text_color=FW_DIM).pack(anchor="w")
 
-    def firmware_picker(row, title, list_var):
-        mode = tk.StringVar(value="list")
-        custom = {"path": None}
-        ctk.CTkLabel(fw_frame, text=title, font=ctk.CTkFont(weight="bold")).grid(row=row, column=0, sticky="w", padx=5, pady=(5, 0))
-        ctk.CTkRadioButton(fw_frame, text="Aus der Liste:", variable=mode, value="list").grid(row=row + 1, column=0, sticky="w", padx=5, pady=3)
-        ctk.CTkButton(fw_frame, textvariable=list_var, command=lambda: open_firmware_popup(list_var), width=320).grid(row=row + 1, column=1, sticky="w", padx=5, pady=3)
-        ctk.CTkRadioButton(fw_frame, text="Eigene .uf2:", variable=mode, value="custom").grid(row=row + 2, column=0, sticky="w", padx=5, pady=3)
-        btn = ctk.CTkButton(fw_frame, text="Datei wählen…", width=320)
-        btn.grid(row=row + 2, column=1, sticky="w", padx=5, pady=3)
+    body = ctk.CTkScrollableFrame(win, fg_color="transparent")
+    body.pack(fill="both", expand=True, padx=10, pady=(4, 10))
 
-        def pick():
-            path = filedialog.askopenfilename(parent=win, title="UF2-Datei wählen", filetypes=[("UF2 files", "*.uf2")])
-            if path:
-                custom["path"] = path
-                mode.set("custom")
-                btn.configure(text=os.path.basename(path))
-        btn.configure(command=pick)
+    def make_step(i, title, subtitle):
+        row = ctk.CTkFrame(body, fg_color="transparent")
+        row.pack(fill="x", pady=(8, 0))
+        row.grid_columnconfigure(1, weight=1)
+        circle = ctk.CTkLabel(row, text=str(i + 1), width=30, height=30, corner_radius=15, fg_color=FW_SLATE,
+                              text_color="white", font=ctk.CTkFont(weight="bold"))
+        circle.grid(row=0, column=0, sticky="n", padx=(6, 12), pady=2)
+        title_l = ctk.CTkLabel(row, text=title, font=ctk.CTkFont(size=15, weight="bold"), anchor="w")
+        title_l.grid(row=0, column=1, sticky="w")
+        sub = ctk.CTkLabel(row, text=subtitle, text_color=FW_DIM, anchor="w")
+        frame = ctk.CTkFrame(row, fg_color="transparent")
+        for w in (circle, title_l):
+            w.bind("<Button-1>", lambda e, i=i: go(i) if i < cur["i"] and not st["busy"] else None)
+        steps.append({"circle": circle, "sub": sub, "frame": frame})
+        return frame
 
-        def resolve():
-            if mode.get() == "custom":
-                if not custom["path"]:
-                    return None, None, "keine .uf2-Datei gewählt"
-                src, is_url = custom["path"], False
+    def nav(frame, row, next_cmd=None, next_text="Nächster Schritt", back=True):
+        bar = ctk.CTkFrame(frame, fg_color="transparent")
+        bar.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        if back:
+            ctk.CTkButton(bar, text="Zurück", width=100, fg_color="transparent", border_width=1,
+                          border_color=FW_SLATE, command=go_back).pack(side="left")
+        if not next_cmd:
+            return None
+        btn = ctk.CTkButton(bar, text=next_text, width=160, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
+                            command=next_cmd, state="disabled")
+        btn.pack(side="right")
+        return btn
+
+    def go_back():
+        if st["busy"]:
+            return
+        # Bei eigener Datei gibt es nichts zu konfigurieren
+        go(0 if cur["i"] == 2 and st["file"] else cur["i"] - 1)
+
+    # ---------- 1: Firmware waehlen ----------
+    f1 = make_step(0, "Wähle die Firmware zum Flashen aus", "Quelle, Board und Version")
+    for c in range(3):
+        f1.grid_columnconfigure(c, weight=1, uniform="s1")
+
+    # Vorerst nur Tracker; st["role"] bleibt fuer einen spaeteren Dongle-Zweig drin
+    def column(c, title):
+        box = ctk.CTkFrame(f1, fg_color="transparent")
+        box.grid(row=1, column=c, sticky="nsew", padx=6)
+        ctk.CTkLabel(box, text=title, font=ctk.CTkFont(weight="bold"), anchor="w").pack(fill="x")
+        inner = ctk.CTkFrame(box, fg_color=FW_CARD, corner_radius=10)
+        inner.pack(fill="both", expand=True, pady=(4, 0))
+        return inner
+
+    col_src = column(0, "Firmware-Quelle")
+    col_board = column(1, "Boardtyp")
+    col_ver = column(2, "Firmware-Version")
+
+    src_cards = {}
+    for src in fw_sources():
+        card = ctk.CTkFrame(col_src, fg_color=FW_CARD2, corner_radius=8, border_width=2, border_color=FW_CARD2)
+        card.pack(fill="x", padx=8, pady=4)
+        t = ctk.CTkLabel(card, text=src["name"], anchor="w", font=ctk.CTkFont(weight="bold"))
+        t.pack(fill="x", padx=10, pady=(6, 0))
+        line = ctk.CTkFrame(card, fg_color="transparent")
+        line.pack(fill="x", padx=10, pady=(0, 6))
+        o = ctk.CTkLabel(line, text=src["owner"], anchor="w", text_color=FW_DIM)
+        o.pack(side="left")
+        badge = ctk.CTkLabel(line, text=f" {src['badge']} ", corner_radius=6, height=18,
+                             fg_color=FW_PURPLE if src["badge"] == "Offiziell" else FW_SLATE,
+                             text_color="white", font=ctk.CTkFont(size=11))
+        badge.pack(side="right")
+        for w in (card, t, line, o, badge):
+            w.bind("<Button-1>", lambda e, s=src: select_source(s))
+        src_cards[src["id"]] = card
+
+    board_menu = ctk.CTkOptionMenu(col_board, values=["Keine Quelle ausgewählt"], state="disabled",
+                                   command=lambda v: set_board(board_map.get(v)))
+    board_menu.set("Keine Quelle ausgewählt")
+    board_menu.pack(fill="x", padx=10, pady=12)
+
+    def pick_file():
+        path = filedialog.askopenfilename(parent=win, title="UF2-Datei wählen", filetypes=[("UF2 files", "*.uf2")])
+        if path:
+            st["file"] = path
+            file_btn.configure(text=os.path.basename(path))
+            update_next1()
+
+    file_btn = ctk.CTkButton(col_board, text="Datei wählen…", command=pick_file)
+
+    ver_menu = ctk.CTkOptionMenu(col_ver, values=["Keine Quelle ausgewählt"], state="disabled",
+                                 command=lambda v: select_version(v))
+    ver_menu.set("Keine Quelle ausgewählt")
+    ver_menu.pack(fill="x", padx=10, pady=12)
+    ctk.CTkLabel(col_ver, text="Der Dongle muss dieselbe\nVersion haben.", text_color=FW_DIM,
+                 justify="left").pack(anchor="w", padx=10, pady=(0, 10))
+
+    def next1():
+        if st["file"] and st["source"]["repo"] is None:
+            info = parse_fw_name(os.path.basename(st["file"])) or {}
+            st["asset"] = {"name": os.path.basename(st["file"]), "url": None, "path": st["file"], "ext": "uf2",
+                           "options": info.get("options", frozenset()), "board": info.get("board", "")}
+            go(2)
+        else:
+            go(1)
+
+    next1_btn = nav(f1, 2, next_cmd=next1, back=False)
+
+    def update_next1():
+        if st["source"] and st["source"]["repo"] is None:
+            ok = bool(st["file"])
+        else:
+            ok = bool(st["release"] and st["board"])
+        next1_btn.configure(state="normal" if ok else "disabled")
+
+    def select_source(src):
+        if st["busy"]:
+            return
+        st["source"], st["release"], st["board"] = src, None, None
+        for sid, card in src_cards.items():
+            card.configure(border_color=FW_PURPLE if sid == src["id"] else FW_CARD2)
+        if src["repo"] is None:
+            board_menu.pack_forget()
+            file_btn.pack(fill="x", padx=10, pady=12)
+            ver_menu.configure(values=["Eigene Datei"], state="disabled")
+            ver_menu.set("Eigene Datei")
+            update_next1()
+            return
+        st["file"] = None
+        file_btn.pack_forget()
+        board_menu.pack(fill="x", padx=10, pady=12)
+        for m in (board_menu, ver_menu):
+            m.configure(state="disabled")
+            m.set("Lade…")
+        update_next1()
+
+        def work():
+            try:
+                rels, err = fetch_releases(src["repo"]), None
+            except Exception as e:
+                rels, err = [], e
+            ui(lambda: releases_loaded(src, rels, err))
+        threading.Thread(target=work, daemon=True).start()
+
+    def releases_loaded(src, rels, err):
+        if st["source"] is not src:
+            return
+        st["releases"] = rels
+        if err or not rels:
+            ver_menu.set("Fehler beim Laden" if err else "Keine Firmware gefunden")
+            board_menu.set("–")
+            if err:
+                append_text(f"[Firmware-Tool] {src['repo']}: {err}\n", "error")
+            update_next1()
+            return
+        ver_map.clear()
+        for k, rel in enumerate(rels):
+            ver_map[rel["tag"] + ("  (neueste)" if k == 0 else "")] = rel
+        labels = list(ver_map)
+        ver_menu.configure(values=labels, state="normal")
+        ver_menu.set(labels[0])
+        select_version(labels[0])
+
+    def select_version(label):
+        st["release"] = ver_map.get(label)
+        refresh_boards()
+
+    def set_board(board):
+        st["board"] = board
+        update_next1()
+
+    def refresh_boards():
+        boards = sorted({a["board"] for a in st["release"]["assets"] if a["role"] == st["role"]}) if st["release"] else []
+        board_map.clear()
+        board_map.update({b.replace("_", " "): b for b in boards})
+        if not boards:
+            board_menu.configure(values=["Keine für diesen Gerätetyp"], state="disabled")
+            board_menu.set("Keine für diesen Gerätetyp")
+            set_board(None)
+            return
+        pick = st["board"] if st["board"] in boards else None
+        saved = settings.get("fw_last", {}).get(st["role"], {})
+        if not pick and saved.get("board") in boards:
+            pick = saved["board"]
+        if not pick:
+            products = [d.product for d in devices if d.is_receiver == (st["role"] == "dongle")]
+            products += [p["name"] for p in list_tracker_ports() if p["receiver"] == (st["role"] == "dongle")]
+            pick = next((b for b in (guess_board(p, boards) for p in products) if b), boards[0])
+        board_menu.configure(values=list(board_map), state="normal")
+        board_menu.set(pick.replace("_", " "))
+        set_board(pick)
+
+    # ---------- 2: Board konfigurieren ----------
+    f2 = make_step(1, "Konfiguriere dein Board", "Bauweise deines Trackers")
+    f2.grid_columnconfigure(0, weight=1)
+
+    def enter_config():
+        for w in f2.winfo_children():
+            w.destroy()
+        assets = [a for a in st["release"]["assets"] if a["role"] == st["role"] and a["board"] == st["board"]]
+        sets = [a["options"] for a in assets]
+        saved = settings.get("fw_last", {}).get(st["role"], {})
+        saved_opts = frozenset(saved.get("options", []))
+        # Vorschlag: gespeicherte Wahl, sonst die schlichteste Bauweise ohne Sonderplatine (Bao/Chrysalis)
+        base = saved_opts if saved.get("board") == st["board"] and saved_opts in sets else \
+            min(sets, key=lambda o: (len(o) + 10 * bool(o & {"Chrysalis", "Bao"}), sorted(o)))
+        fixed = frozenset.intersection(*sets)
+        choice_vars = {}
+
+        box = ctk.CTkFrame(f2, fg_color=FW_CARD, corner_radius=10)
+        box.grid(row=0, column=0, sticky="ew", padx=6)
+        result = ctk.CTkLabel(f2, text="", anchor="w", justify="left")
+        result.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
+        nxt = nav(f2, 2, next_cmd=lambda: go(2))
+
+        def update_result():
+            chosen = set(fixed)
+            for var, tok in choice_vars.values():
+                if tok and var.get():
+                    chosen.add(tok)
+                elif not tok and var.get():
+                    chosen.add(var.get())
+            match = sorted((a for a in assets if a["options"] == chosen), key=lambda a: a["ext"] != "uf2")
+            st["asset"] = match[0] if match else None
+            if match:
+                result.configure(text=f"✅  {match[0]['name']}", text_color=("green", "lime"))
+                nxt.configure(state="normal")
             else:
-                src, is_url = firmware_urls.get(list_var.get()), True
-                if not src:
-                    return None, None, "erst eine aus der Liste wählen"
-            if not src.lower().endswith(".uf2"):
-                return None, None, "geht nur mit .uf2-Dateien"
-            return src, is_url, None
-        return resolve
+                result.configure(text="❌  Diese Kombination gibt es in dieser Version nicht.", text_color="red")
+                nxt.configure(state="disabled")
 
-    resolve_tracker_fw = firmware_picker(0, "Tracker-Firmware", selected_firmware)
-    ctk.CTkCheckBox(fw_frame, text="Kopplungsdaten der Tracker vorher löschen (danach neu koppeln)", variable=clear_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(3, 8))
-    resolve_dongle_fw = firmware_picker(4, "Dongle-Firmware", dongle_fw_var)
+        r = 0
+        for key, label, toks in FW_OPTION_GROUPS:
+            present = [t for t in toks if any(t in s for s in sets)]
+            has_none = any(not (s & set(toks)) for s in sets)
+            choices = present + ([None] if has_none else [])
+            if len(choices) < 2:
+                continue
+            current = next((t for t in base if t in toks), None)
+            ctk.CTkLabel(box, text=label, anchor="w").grid(row=r, column=0, sticky="w", padx=12, pady=6)
+            if len(toks) == 1:
+                var = tk.BooleanVar(value=current is not None)
+                ctk.CTkCheckBox(box, text="", variable=var, command=update_result).grid(row=r, column=1, sticky="w")
+                choice_vars[key] = (var, toks[0])
+            else:
+                var = tk.StringVar(value=current or "")
+                fr = ctk.CTkFrame(box, fg_color="transparent")
+                fr.grid(row=r, column=1, sticky="w")
+                for t in choices:
+                    ctk.CTkRadioButton(fr, text=t or "keins", variable=var, value=t or "",
+                                       command=update_result).pack(side="left", padx=(0, 12))
+                choice_vars[key] = (var, None)
+            r += 1
+        if r == 0:
+            ctk.CTkLabel(box, text="Für dieses Board gibt es nur eine Bauweise.", text_color=FW_DIM).grid(
+                row=0, column=0, sticky="w", padx=12, pady=10)
+        update_result()
 
-    # Trackerliste
-    list_frame = ctk.CTkScrollableFrame(win, height=280)
-    list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+    # ---------- 3: Geraete waehlen ----------
+    f3 = make_step(2, "Geräte auswählen", "Welche angesteckten Geräte die Firmware bekommen")
+    f3.grid_columnconfigure(0, weight=1)
+    list_frame = ctk.CTkScrollableFrame(f3, height=220, fg_color=FW_CARD, corner_radius=10)
+    list_frame.grid(row=0, column=0, sticky="ew", padx=6)
+    dev_bar = ctk.CTkFrame(f3, fg_color="transparent")
+    dev_bar.grid(row=1, column=0, sticky="ew", padx=6, pady=(6, 0))
+
+    def role_matches(p_or_dev_is_receiver):
+        return p_or_dev_is_receiver == (st["role"] == "dongle")
 
     def refresh_choices():
         label_to_port.clear()
         for p in list_tracker_ports():
-            lbl = port_label(p) + ("  (Empfänger)" if p["receiver"] else "")
+            lbl = port_label(p) + ("  (Dongle)" if p["receiver"] else "")
             label_to_port[lbl] = p
         values = list(label_to_port.keys()) or ["Keine Ports gefunden"]
         for r in rows:
@@ -1130,29 +1458,33 @@ def open_multiflash_window():
         return values
 
     def set_status(r, text, color=None):
-        r["status"].configure(text=text, text_color=color or ctk.ThemeManager.theme["CTkLabel"]["text_color"])
+        color = color or ctk.ThemeManager.theme["CTkLabel"]["text_color"]
+        r["status"].configure(text=text, text_color=color)
+        if r.get("status2") is not None and r["status2"].winfo_exists():
+            r["status2"].configure(text=f"{device_name(r['dev']) if r['dev'] else r['var'].get()}: {text}", text_color=color)
 
     def row_port(r):
         return label_to_port.get(r["var"].get())
 
     def remove_row(r):
-        if busy["on"]:
+        if st["busy"]:
             return
         r["frame"].destroy()
         rows.remove(r)
+        update_next3()
 
     def add_row(label=None):
         values = refresh_choices()
         if label is None:
             used = {r["var"].get() for r in rows}
-            free = [v for v in values if v not in used and v in label_to_port and not label_to_port[v]["receiver"]]
-            label = free[0] if free else "Kein Tracker gefunden"
-        frame = ctk.CTkFrame(list_frame)
+            free = [v for v in values if v not in used and v in label_to_port and role_matches(label_to_port[v]["receiver"])]
+            label = free[0] if free else "Kein passendes Gerät gefunden"
+        frame = ctk.CTkFrame(list_frame, fg_color="transparent")
         frame.pack(fill="x", pady=2)
         r = {"frame": frame, "var": tk.StringVar(value=label), "dev": None}
         ctk.CTkLabel(frame, text=f"#{len(rows) + 1}", width=30).pack(side="left", padx=(5, 0))
         r["menu"] = ctk.CTkOptionMenu(frame, values=values, variable=r["var"], width=330,
-                                      command=lambda _v, rr=r: (rr.update(dev=None), set_status(rr, "")))
+                                      command=lambda _v, rr=r: (rr.update(dev=None), set_status(rr, ""), update_next3()))
         r["menu"].pack(side="left", padx=5, pady=4)
         r["status"] = ctk.CTkLabel(frame, text="", anchor="w")
         r["status"].pack(side="left", fill="x", expand=True, padx=5)
@@ -1163,20 +1495,11 @@ def open_multiflash_window():
         refresh_choices()
         used = {r["var"].get() for r in rows}
         for lbl, p in list(label_to_port.items()):
-            if not p["receiver"] and lbl not in used:
+            if role_matches(p["receiver"]) and lbl not in used:
                 add_row(lbl)
 
-    def add_dongle():
-        refresh_choices()
-        lbl = next((l for l, p in label_to_port.items() if p["receiver"]), None)
-        if not lbl:
-            info_label.configure(text="Kein Dongle gefunden.", text_color="red")
-            return
-        if all(r["var"].get() != lbl for r in rows):
-            add_row(lbl)
-
     def connect_all():
-        if busy["on"]:
+        if st["busy"]:
             return
         refresh_choices()
         asked = False
@@ -1191,6 +1514,9 @@ def open_multiflash_window():
             dev = get_or_add_device(info)
             dev.manual_off = False
             r["dev"] = dev
+            if not role_matches(dev.is_receiver):
+                set_status(r, "passt nicht zum Gerätetyp", "orange")
+                continue
             if dev.connected or connect_device(dev, ask=not asked, parent=win):
                 set_status(r, f"verbunden ({device_name(dev)})", "green")
                 continue
@@ -1198,40 +1524,119 @@ def open_multiflash_window():
             if e is not None and is_permission_error(e):
                 asked = True
             set_status(r, "keine Berechtigung" if e is not None and is_permission_error(e) else f"Fehler: {e}", "red")
+        update_next3()
 
-    def flash_all():
-        if busy["on"]:
-            return
-        targets = [r for r in rows if r["dev"] and r["dev"].connected]
-        if not targets:
-            info_label.configure(text="Erst „Alle verbinden“ drücken.", text_color="red")
-            return
-        jobs = {}
+    def valid_targets():
+        return [r for r in rows if r["dev"] and r["dev"].connected and role_matches(r["dev"].is_receiver)]
+
+    b_add = ctk.CTkButton(dev_bar, text="+ Gerät", width=90, command=add_row)
+    b_add.pack(side="left", padx=(0, 5))
+    b_all = ctk.CTkButton(dev_bar, text="Alle erkannten", width=120, command=add_all_detected)
+    b_all.pack(side="left", padx=5)
+    b_conn = ctk.CTkButton(dev_bar, text="Alle verbinden", width=120, command=connect_all)
+    b_conn.pack(side="left", padx=5)
+    ToolTip(b_add, "Weiteres Gerät hinzufügen")
+    ToolTip(b_all, "Alle angesteckten Geräte dieses Typs übernehmen")
+    next3_btn = nav(f3, 2, next_cmd=lambda: go(3))
+
+    def update_next3():
+        next3_btn.configure(state="normal" if valid_targets() else "disabled")
+
+    def enter_devices():
+        for r in list(rows):
+            if r["dev"] and not role_matches(r["dev"].is_receiver):
+                r["frame"].destroy()
+                rows.remove(r)
+        if not rows:
+            add_all_detected()
+            if not rows:
+                add_row()
+        update_next3()
+
+    # ---------- 4: Flash-Methode ----------
+    f4 = make_step(3, "Flash-Methode", "Wie die Firmware auf das Gerät kommt")
+    f4.grid_columnconfigure(0, weight=1)
+
+    def enter_method():
+        for w in f4.winfo_children():
+            w.destroy()
+        is_uf2 = st["asset"]["ext"] == "uf2"
+        box = ctk.CTkFrame(f4, fg_color=FW_CARD, corner_radius=10)
+        box.grid(row=0, column=0, sticky="ew", padx=6)
+        method = tk.StringVar(value="uf2" if is_uf2 else "")
+        ctk.CTkRadioButton(box, text="UF2-Laufwerk – Gerät startet in den Bootloader, die Datei wird kopiert",
+                           variable=method, value="uf2", state="normal" if is_uf2 else "disabled").pack(anchor="w", padx=12, pady=(10, 4))
+        ctk.CTkRadioButton(box, text="Seriell (nrfutil) – für .hex-Dateien, noch nicht verfügbar",
+                           variable=method, value="serial", state="disabled").pack(anchor="w", padx=12, pady=(4, 10))
+        if st["role"] == "tracker":
+            ctk.CTkCheckBox(box, text="Kopplungsdaten vorher löschen (danach neu koppeln)",
+                            variable=clear_var).pack(anchor="w", padx=12, pady=(0, 10))
+        nxt = nav(f4, 2, next_cmd=lambda: go(4), next_text="Weiter zum Flashen")
+        if is_uf2:
+            nxt.configure(state="normal")
+        else:
+            ctk.CTkLabel(f4, text=f"{st['asset']['name']} ist eine .hex-Datei. Dafür gibt es noch keine "
+                                  "funktionierende Flash-Methode.", text_color="red", anchor="w",
+                         justify="left", wraplength=700).grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
+
+    # ---------- 5: Flashen ----------
+    f5 = make_step(4, "Flashen", "Firmware aufspielen")
+    f5.grid_columnconfigure(0, weight=1)
+    flash_ctl = {}
+
+    def enter_flash():
+        for w in f5.winfo_children():
+            w.destroy()
+        targets = valid_targets()
+        src = st["source"]
+        version = "eigene Datei" if src["repo"] is None else st["release"]["tag"]
+        box = ctk.CTkFrame(f5, fg_color=FW_CARD, corner_radius=10)
+        box.grid(row=0, column=0, sticky="ew", padx=6)
+        ctk.CTkLabel(box, text=f"Firmware:  {st['asset']['name']}\nQuelle:  {src['owner']} / {src['name']}  ·  {version}",
+                     anchor="w", justify="left").pack(anchor="w", padx=12, pady=(10, 6))
         for r in targets:
-            r["kind"] = "dongle" if r["dev"].is_receiver else "tracker"
-            if r["kind"] not in jobs:
-                src, is_url, err = (resolve_dongle_fw if r["kind"] == "dongle" else resolve_tracker_fw)()
-                if err:
-                    info_label.configure(text=f"{'Dongle' if r['kind'] == 'dongle' else 'Tracker'}-Firmware: {err}.", text_color="red")
-                    return
-                jobs[r["kind"]] = (src, is_url)
-        busy["on"] = True
-        for b in action_buttons:
-            b.configure(state="disabled")
-        threading.Thread(target=flash_worker, args=(targets, jobs, clear_var.get()), daemon=True).start()
+            r["status2"] = ctk.CTkLabel(box, text=f"{device_name(r['dev'])}: bereit", anchor="w")
+            r["status2"].pack(anchor="w", padx=24)
+        info = ctk.CTkLabel(f5, text="", anchor="w", text_color=FW_DIM)
+        info.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
+        bar = ctk.CTkFrame(f5, fg_color="transparent")
+        bar.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        back = ctk.CTkButton(bar, text="Zurück", width=100, fg_color="transparent", border_width=1,
+                             border_color=FW_SLATE, command=go_back)
+        back.pack(side="left")
+        start = ctk.CTkButton(bar, text="⬇ Flashen starten", width=180, fg_color="green", hover_color="#006400",
+                              command=lambda: flash_start(targets))
+        start.pack(side="right")
+        flash_ctl.update(info=info, start=start, back=back)
 
-    def flash_worker(targets, jobs, clear):
+    def remember_choice():
+        if st["source"]["repo"] is None:
+            return
+        settings.setdefault("fw_last", {})[st["role"]] = {
+            "source": st["source"]["id"], "board": st["board"], "options": sorted(st["asset"]["options"]),
+        }
+        save_settings()
+
+    def flash_start(targets):
+        if st["busy"] or not targets:
+            return
+        remember_choice()
+        st["busy"] = True
+        for b in (flash_ctl["start"], flash_ctl["back"], b_add, b_all, b_conn):
+            b.configure(state="disabled")
+        threading.Thread(target=flash_worker, args=(targets, dict(st["asset"]), clear_var.get()), daemon=True).start()
+
+    def flash_worker(targets, asset, clear):
+        info = flash_ctl["info"]
         try:
-            paths = {}
-            for kind, (src, is_url) in jobs.items():
-                paths[kind] = src
-                if is_url:
-                    ui(lambda: info_label.configure(text="Lade Firmware…", text_color="gray"))
-                    paths[kind] = os.path.join(tempfile.gettempdir(), os.path.basename(src))
-                    response = requests.get(src, stream=True, timeout=30)
-                    response.raise_for_status()
-                    with open(paths[kind], "wb") as f:
-                        shutil.copyfileobj(response.raw, f)
+            fw_path = asset.get("path")
+            if not fw_path:
+                ui(lambda: info.configure(text="Lade Firmware…"))
+                fw_path = os.path.join(tempfile.gettempdir(), asset["name"])
+                response = requests.get(asset["url"], stream=True, timeout=30)
+                response.raise_for_status()
+                with open(fw_path, "wb") as f:
+                    shutil.copyfileobj(response.raw, f)
 
             before = set(find_usb_drives())
             for r in targets:
@@ -1240,7 +1645,7 @@ def open_multiflash_window():
                 r["location"] = dev.location
                 try:
                     with ser_lock:
-                        if clear and r["kind"] == "tracker":  # beim Dongle wuerde clear alle Kopplungen loeschen
+                        if clear and not dev.is_receiver:  # beim Dongle wuerde clear alle Kopplungen loeschen
                             dev.ser.write(b"clear\n")
                             time.sleep(0.5)
                         dev.ser.write(b"dfu\n")
@@ -1252,7 +1657,7 @@ def open_multiflash_window():
                 ui(refresh_sidebar)
                 ui(sync_active)
 
-            ui(lambda: info_label.configure(text="Warte auf die UF2-Laufwerke…", text_color="gray"))
+            ui(lambda: info.configure(text="Warte auf die UF2-Laufwerke…"))
             pending = {r["location"]: r for r in targets if r["location"]}
             found = {}
             deadline = time.time() + 30
@@ -1266,7 +1671,6 @@ def open_multiflash_window():
                 time.sleep(1)
 
             def copy_one(r, mount):
-                fw_path = paths[r["kind"]]
                 try:
                     dest = os.path.join(mount, os.path.basename(fw_path))
                     with open(fw_path, "rb") as s, open(dest, "wb") as d:
@@ -1277,7 +1681,7 @@ def open_multiflash_window():
                     pass  # Der Bootloader startet oft schon waehrend des Schliessens neu
                 ui(lambda: set_status(r, "geschrieben, startet neu…"))
 
-            ui(lambda: info_label.configure(text="Schreibe Firmware…", text_color="gray"))
+            ui(lambda: info.configure(text="Schreibe Firmware…"))
             copies = []
             for loc, r in pending.items():
                 if loc in found:
@@ -1292,59 +1696,59 @@ def open_multiflash_window():
             for t in copies:
                 t.join()
 
-            # Erfolg = der Tracker meldet sich mit neuer Firmware wieder als Port
+            # Erfolg = das Geraet meldet sich mit neuer Firmware wieder als Port
             waiting = {loc: r for loc, r in pending.items() if loc in found}
             deadline = time.time() + 30
             while waiting and time.time() < deadline:
                 for p in list_tracker_ports():
                     r = waiting.pop(p["location"], None)
                     if r:
-                        ui(lambda rr=r, pp=p: (refresh_choices(), rr["var"].set(next((l for l, q in label_to_port.items() if q["device"] == pp["device"]), rr["var"].get())), set_status(rr, "fertig ✅", "green")))
+                        ui(lambda rr=r: set_status(rr, "fertig ✅", "green"))
                 time.sleep(1)
             for r in waiting.values():
                 ui(lambda rr=r: set_status(rr, "geschrieben, aber nicht zurückgemeldet", "orange"))
 
             ok = len(found) - len(waiting)
-            ui(lambda: info_label.configure(text=f"{ok} von {len(targets)} fertig.", text_color="green" if ok == len(targets) else "orange"))
-            ui(lambda: append_text(f"Geräteverwaltung: {ok} von {len(targets)} Geräten geflasht.\n", "success"))
+            ui(lambda: info.configure(text=f"{ok} von {len(targets)} fertig.",
+                                      text_color="green" if ok == len(targets) else "orange"))
+            ui(lambda: append_text(f"Firmware-Tool: {ok} von {len(targets)} Geräten mit {asset['name']} geflasht.\n", "success"))
         except Exception as e:
-            ui(lambda e=e: info_label.configure(text=f"Fehler: {e}", text_color="red"))
+            ui(lambda e=e: info.configure(text=f"Fehler: {e}", text_color="red"))
         finally:
             for r in targets:
                 r["dev"].paused = False  # watch_devices verbindet sie wieder
-            busy["on"] = False
-            ui(lambda: [b.configure(state="normal") for b in action_buttons])
+            st["busy"] = False
 
-    # Knoepfe
-    btn_frame = ctk.CTkFrame(win)
-    btn_frame.pack(fill="x", padx=10, pady=5)
-    b_add = ctk.CTkButton(btn_frame, text="+ Tracker", width=100, command=add_row)
-    b_add.pack(side="left", padx=5, pady=5)
-    b_all = ctk.CTkButton(btn_frame, text="Alle erkannten", width=110, command=add_all_detected)
-    b_all.pack(side="left", padx=5, pady=5)
-    b_dongle = ctk.CTkButton(btn_frame, text="+ Dongle", width=90, command=add_dongle)
-    b_dongle.pack(side="left", padx=5, pady=5)
-    b_flash = ctk.CTkButton(btn_frame, text="⬇ Alle flashen", command=flash_all, fg_color="green", hover_color="#006400")
-    b_flash.pack(side="right", padx=5, pady=5)
-    b_conn = ctk.CTkButton(btn_frame, text="Alle verbinden", command=connect_all)
-    b_conn.pack(side="right", padx=5, pady=5)
-    action_buttons = [b_add, b_all, b_dongle, b_flash, b_conn]
-    ToolTip(b_dongle, "Dongle hinzufügen – er bekommt die Dongle-Firmware")
-    ToolTip(b_add, "Weiteren Tracker hinzufügen")
-    ToolTip(b_all, "Alle angesteckten Tracker übernehmen (ohne Dongle)")
-    ToolTip(b_conn, "Alle Tracker in der Liste verbinden")
-    ToolTip(b_flash, "Alle verbundenen Tracker in den Bootloader schicken und die Firmware aufspielen")
+            def done():
+                for b in (flash_ctl["back"], b_add, b_all, b_conn):
+                    b.configure(state="normal")
+                flash_ctl["start"].configure(state="normal", text="Nochmal flashen")
+            ui(done)
 
-    info_label = ctk.CTkLabel(win, text="Geräte per USB anstecken, hinzufügen, verbinden, flashen.", text_color="gray")
-    info_label.pack(fill="x", padx=10, pady=(0, 10))
+    def go(i):
+        cur["i"] = i
+        for j, s in enumerate(steps):
+            if j == i:
+                s["circle"].configure(text=str(j + 1), fg_color=FW_PURPLE)
+                s["sub"].grid(row=1, column=1, sticky="w")
+                s["frame"].grid(row=2, column=1, sticky="ew", pady=(8, 4), padx=(0, 10))
+            else:
+                s["circle"].configure(text="✓" if j < i else str(j + 1), fg_color=FW_GREEN if j < i else FW_SLATE)
+                s["sub"].grid_forget()
+                s["frame"].grid_forget()
+        enter = [None, enter_config, enter_devices, enter_method, enter_flash][i]
+        if enter:
+            enter()
 
     def on_close():
-        if busy["on"]:
+        if st["busy"]:
             return
         win.destroy()
 
     win.protocol("WM_DELETE_WINDOW", on_close)
-    add_row()
+    go(0)
+    src_id = settings.get("fw_last", {}).get("tracker", {}).get("source", "main")
+    select_source(next((s for s in fw_sources() if s["id"] == src_id), fw_sources()[0]))
 
 # Buttons!
 def start_firmware_download():
