@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.27"
+APP_VERSION = "1.0.28"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -2468,7 +2468,7 @@ def open_multiflash_window():
                         dev.listeners.remove(replies.append)
                 if any("Unknown command" in line for line in replies):
                     r["manual"] = True
-                    ui(lambda: set_status(r, "Firmware kennt „dfu“ nicht – bitte jetzt zweimal Reset drücken", "orange"))
+                    ui(lambda: set_status(r, "Firmware kennt „dfu“ nicht – bitte jetzt viermal schnell Reset drücken", "orange"))
                 disconnect_device(dev)
                 ui(refresh_sidebar)
                 ui(sync_active)
