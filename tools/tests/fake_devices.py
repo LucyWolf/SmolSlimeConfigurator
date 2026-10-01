@@ -25,6 +25,8 @@ def fake_device(product, serial_no, info_lines, cfg=None):
                     out = [f"Updated config: {k}={v}"]
                 elif cmd == "list":
                     out = ["Stored devices: 2", "0: ED722F24DECA30F1", "1: FBB8E4EE16CFC112"]
+                elif cmd:
+                    out = [cmd, "Unknown command"]   # wie Firmware ohne UF2-Unterstuetzung bei "dfu"
                 for o in out:
                     os.write(master, (o + "\r\n").encode())
     threading.Thread(target=loop, daemon=True).start()

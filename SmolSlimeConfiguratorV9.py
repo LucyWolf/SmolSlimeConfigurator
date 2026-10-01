@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.25"
+APP_VERSION = "1.0.26"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1154,8 +1154,31 @@ def find_usb_drives():
         name = os.path.basename(blk)
         devs = ["/dev/" + name] + ["/dev/" + os.path.basename(x) for x in glob.glob(os.path.join(blk, name + "*"))]
         mount = next((mounts[d] for d in devs if d in mounts), None)
-        drives[name] = {"devs": devs, "location": locs[-1] if locs else "", "mount": mount}
+        serial_no = ""
+        up = real
+        while up not in ("/", ""):
+            if os.path.isfile(os.path.join(up, "idVendor")) and os.path.isfile(os.path.join(up, "serial")):
+                try:
+                    with open(os.path.join(up, "serial")) as f:
+                        serial_no = f.read().strip()
+                except Exception:
+                    pass
+                break
+            up = os.path.dirname(up)
+        drives[name] = {"devs": devs, "location": locs[-1] if locs else "", "mount": mount, "serial": serial_no}
     return drives
+
+# Geraete, die schon im UF2-Bootloader stecken (manueller DFU, oder ohne startfaehige Firmware):
+# [{"root", "serial", "location"}]. Unter Windows ist die Seriennummer unbekannt.
+def bootloader_drives():
+    if not sys.platform.startswith("linux"):
+        return [{"root": r, "serial": "", "location": ""} for r in uf2_drive_roots()]
+    found = []
+    for d in find_usb_drives().values():
+        root = mount_drive(d)
+        if root and os.path.isfile(os.path.join(root, "INFO_UF2.TXT")):
+            found.append({"root": root, "serial": d["serial"], "location": d["location"]})
+    return found
 
 def mount_drive(drive):
     if drive["mount"]:
@@ -2304,6 +2327,16 @@ def open_multiflash_window():
         for r in targets:
             r["status2"] = ctk.CTkLabel(box, text=f"{device_name(r['dev'])}: bereit", anchor="w")
             r["status2"].pack(anchor="w", padx=24)
+        # Schon im Bootloader steckende Geraete (UF2-Laufwerk) werden direkt mitgeflasht
+        pre = []
+        for d in bootloader_drives():
+            line = ctk.CTkFrame(box, fg_color="transparent")
+            line.pack(anchor="w", padx=24)
+            name = f"Im Bootloader ({d['serial'] or os.path.basename(d['root'].rstrip(os.sep)) or d['root']})"
+            ctk.CTkLabel(line, text=f"{name}:", anchor="w").pack(side="left")
+            lbl = ctk.CTkLabel(line, text=" bereit – wird direkt beschrieben", anchor="w")
+            lbl.pack(side="left")
+            pre.append({"drive": d, "dev": None, "status": lbl, "status2": None})
         info = ctk.CTkLabel(f5, text="", anchor="w", text_color=FW_DIM)
         info.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
         bar = ctk.CTkFrame(f5, fg_color="transparent")
@@ -2312,7 +2345,7 @@ def open_multiflash_window():
                              border_color=FW_SLATE, command=go_back)
         back.pack(side="left")
         start = ctk.CTkButton(bar, text="⬇ Flashen starten", width=180, fg_color="green", hover_color="#006400",
-                              command=lambda: flash_start(targets))
+                              command=lambda: flash_start(targets, pre))
         start.pack(side="right")
         flash_ctl.update(info=info, start=start, back=back)
 
@@ -2326,7 +2359,7 @@ def open_multiflash_window():
                     ok = r["dev"].connected
                     r["status2"].configure(text=f"{device_name(r['dev'])}: {'bereit' if ok else 'getrennt – abgezogen?'}",
                                            text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"] if ok else "red")
-            if not targets or len(gone) == len(targets):
+            if (not targets or len(gone) == len(targets)) and not pre:
                 info.configure(text="Kein Gerät verbunden – Gerät anstecken und in Schritt 3 verbinden.",
                                text_color="red")
                 start.configure(state="disabled")
@@ -2347,9 +2380,10 @@ def open_multiflash_window():
         }
         save_settings()
 
-    def flash_start(targets):
+    def flash_start(targets, pre=()):
         targets = [r for r in targets if r["dev"] and r["dev"].connected]   # inzwischen abgezogene auslassen
-        if st["busy"] or not targets:
+        pre = [r for r in pre if os.path.isfile(os.path.join(r["drive"]["root"], "INFO_UF2.TXT"))]
+        if st["busy"] or not (targets or pre):
             flash_ctl["info"].configure(text="Kein Gerät verbunden.", text_color="red")
             return
         cmds, err = collect_settings()
@@ -2360,7 +2394,8 @@ def open_multiflash_window():
         st["busy"] = True
         for b in (flash_ctl["start"], flash_ctl["back"], b_add, b_all, b_conn):
             b.configure(state="disabled")
-        threading.Thread(target=flash_worker, args=(targets, dict(st["asset"]), clear_var.get(), cmds), daemon=True).start()
+        threading.Thread(target=flash_worker, args=(targets, dict(st["asset"]), clear_var.get(), cmds, pre),
+                         daemon=True).start()
 
     # Schreibt die Einstellungen und zaehlt die Bestaetigungen ("Updated config")
     def apply_settings(r, cmds):
@@ -2389,7 +2424,7 @@ def open_multiflash_window():
         else:
             ui(lambda: set_status(r, f"fertig ✅, nur {ok} von {writes} Einstellungen bestätigt", "orange"))
 
-    def flash_worker(targets, asset, clear, cmds):
+    def flash_worker(targets, asset, clear, cmds, pre=()):
         info = flash_ctl["info"]
         try:
             fw_path = asset.get("path")
@@ -2404,6 +2439,8 @@ def open_multiflash_window():
             def enter_bootloader(r):
                 dev = r["dev"]
                 dev.paused = True
+                replies = []
+                dev.listeners.append(replies.append)
                 try:
                     with ser_lock:
                         if clear and not dev.is_receiver:  # beim Dongle wuerde clear alle Kopplungen loeschen
@@ -2412,8 +2449,15 @@ def open_multiflash_window():
                         dev.ser.write(b"dfu\n")
                         dev.ser.flush()
                     ui(lambda: set_status(r, "Bootloader…"))
+                    time.sleep(1.0)   # Antwort abwarten: Firmware ohne UF2-Unterstuetzung kennt dfu nicht
                 except Exception as e:
                     ui(lambda e=e: set_status(r, f"dfu fehlgeschlagen: {e}", "red"))
+                finally:
+                    if replies.append in dev.listeners:
+                        dev.listeners.remove(replies.append)
+                if any("Unknown command" in line for line in replies):
+                    r["manual"] = True
+                    ui(lambda: set_status(r, "Firmware kennt „dfu“ nicht – bitte jetzt zweimal Reset drücken", "orange"))
                 disconnect_device(dev)
                 ui(refresh_sidebar)
                 ui(sync_active)
@@ -2433,6 +2477,11 @@ def open_multiflash_window():
             keys = {id(r): r["dev"].serial_number or r["dev"].location or f"#{i}" for i, r in enumerate(targets)}
             found = {}
 
+            # Geraete, die schon im Bootloader stecken: Datei direkt aufs Laufwerk
+            for i, r in enumerate(pre):
+                found[r["drive"]["serial"] or r["drive"]["location"] or f"boot{i}"] = r
+                copy_one(r, r["drive"]["root"])
+
             if sys.platform.startswith("linux") and all(r["dev"].location for r in targets):
                 # Linux: alle gleichzeitig, Laufwerk und Tracker ueber den USB-Steckplatz zuordnen
                 before = set(find_usb_drives())
@@ -2441,7 +2490,7 @@ def open_multiflash_window():
                 ui(lambda: info.configure(text="Warte auf die UF2-Laufwerke…"))
                 by_loc = {r["dev"].location: r for r in targets}
                 mounts = {}
-                deadline = time.time() + 30
+                deadline = time.time() + (60 if any(r.get("manual") for r in targets) else 30)
                 while time.time() < deadline and len(mounts) < len(by_loc):
                     for name, d in find_usb_drives().items():
                         if name in before or d["location"] in mounts or d["location"] not in by_loc:
@@ -2469,7 +2518,7 @@ def open_multiflash_window():
                     ui(lambda n=n: info.configure(text=f"Tracker {n} von {len(targets)}…"))
                     before = set(uf2_drive_roots())
                     enter_bootloader(r)
-                    root, deadline = None, time.time() + 30
+                    root, deadline = None, time.time() + (60 if r.get("manual") else 30)
                     while root is None and time.time() < deadline:
                         root = next((d for d in uf2_drive_roots() if d not in before), None)
                         time.sleep(0.5)
@@ -2497,7 +2546,7 @@ def open_multiflash_window():
                 ui(lambda rr=r: set_status(rr, "geschrieben, aber nicht zurückgemeldet", "orange"))
 
             if cmds:
-                done_rows = [r for key, r in found.items() if key not in waiting]
+                done_rows = [r for key, r in found.items() if key not in waiting and r.get("dev")]
                 for r in done_rows:
                     r["dev"].paused = False  # damit watch_devices sie wieder verbindet
                 ui(lambda: info.configure(text="Übertrage Einstellungen…"))
@@ -2507,10 +2556,11 @@ def open_multiflash_window():
                 for t in workers:
                     t.join()
 
+            total = len(targets) + len(pre)
             ok = len(found) - len(waiting)
-            ui(lambda: info.configure(text=f"{ok} von {len(targets)} fertig.",
-                                      text_color="green" if ok == len(targets) else "orange"))
-            ui(lambda: append_text(f"Firmware-Tool: {ok} von {len(targets)} Geräten mit {asset['name']} geflasht.\n", "success"))
+            ui(lambda: info.configure(text=f"{ok} von {total} fertig.",
+                                      text_color="green" if ok == total else "orange"))
+            ui(lambda: append_text(f"Firmware-Tool: {ok} von {total} Geräten mit {asset['name']} geflasht.\n", "success"))
         except Exception as e:
             ui(lambda e=e: info.configure(text=f"Fehler: {e}", text_color="red"))
         finally:
