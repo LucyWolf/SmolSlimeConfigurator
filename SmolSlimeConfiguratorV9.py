@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1208,7 +1208,7 @@ FW_OPTION_GROUPS = [
     ("variant", "Bauform", ["StackedSmol", "Chrysalis", "Bao"]),
     ("bus", "Sensor-Anschluss", ["SPI", "I2C", "smSPI"]),
     ("mag", "Magnetometer", ["Mag"]),
-    ("clk", "Sensor-Takt (CLKIN/INT2)", ["CLK", "NoCLK"]),
+    ("clk", "Sensor-Takt (CLKIN/INT2)", ["CLK"]),   # an/aus; NoCLK wird beim Einlesen umgerechnet
     ("sleep", "Schlafmodus aus", ["NoSleep"]),
     ("sw0", "Taster an SW0", ["SW0"]),
     ("tdma", "Funkmodus TDMA", ["TDMA"]),
@@ -1232,8 +1232,7 @@ FW_OPTION_HELP = {
     "clk": "Der Controller gibt über eine eigene Leitung einen Takt (32,768 kHz) an den Sensor. Das macht die "
            "Zeitmessung genauer und spart etwas Strom. Am ICM-Sensor gehört diese Leitung an CLKIN – das ist "
            "derselbe Pin wie INT2, nicht INT1 (INT1 ist der normale Interrupt). Am Controller kommt der Takt beim "
-           "ProMicro aus P0.20, beim Stacked Smol aus P1.11. Nur einschalten, wenn die Leitung angeschlossen ist. "
-           "„Platinen-Standard“: beim normalen ProMicro aus, beim Stacked Smol an.",
+           "ProMicro aus P0.20, beim Stacked Smol aus P1.11. Nur einschalten, wenn die Leitung angeschlossen ist.",
     "sleep": "Normalerweise legt sich der Tracker schlafen, wenn er still liegt, und wacht bei Bewegung wieder auf. "
              "Das spart viel Akku. Mit „Schlafmodus aus“ bleibt er immer wach: Er reagiert sofort, aber der Akku "
              "hält deutlich kürzer. Sinnvoll, wenn dein Sensor das Aufwecken durch Bewegung nicht kann.",
@@ -1249,7 +1248,6 @@ FW_OPTION_HELP = {
 FW_CHOICE_LABELS = {
     "bus": {"SPI": "SPI (empfohlen)", "I2C": "I2C", "smSPI": "SPI (Smol-Belegung)", None: "Platinen-Standard"},
     "variant": {"StackedSmol": "Stacked Smol", None: "Platinen-Standard"},
-    "clk": {"CLK": "An", "NoCLK": "Aus", None: "Platinen-Standard"},
 }
 
 # Laufzeit-Einstellungen der offiziellen Firmware (write_config <name> <wert>).
@@ -1358,7 +1356,7 @@ def label_with_help(parent, row, text, help_text, bold=False, padx=12):
 # Zwei Namensschemata: SlimeNRF_Tracker_SPI_Mag_ProMicro (CI) und
 # SlimeNRF_ProMicro_StackedSmol_Tracker_I2C bzw. Aero_Tracker_Pro (jitingcn).
 # Bekannte Optionen werden herausgezogen, der Rest ist das Board.
-FW_TOKEN_ALIASES = {t.lower(): t for t in FW_OPTION_TOKENS}
+FW_TOKEN_ALIASES = {t.lower(): t for t in FW_OPTION_TOKENS | {"NoCLK"}}
 
 def parse_fw_name(name):
     base, _, ext = name.rpartition(".")
@@ -1372,15 +1370,24 @@ def parse_fw_name(name):
         extra = [t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() not in ("nosleepclk", "promicro")]
         if extra:
             rest = [t for t in rest if t not in extra and t.lower() != "stackedsmol"] + ["StackedSmol_" + "_".join(extra)]
+    opts = set(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES)
+    if any(t.lower() == "nosleepclk" for t in rest):
+        opts |= {"NoSleep", "CLK"}
+    if any(t.lower().startswith("stackedsmol") for t in rest):
+        opts.add("SW0")
+    # Sensor-Takt gibt es nur an/aus. Ohne Angabe ist er beim Stacked Smol und bei Chrysalis an (ihr Board
+    # legt die Leitung fest), beim normalen ProMicro aus. Danach steht "CLK" genau dann drin, wenn er an ist.
+    board_clk = any(t.lower().startswith(("stackedsmol", "chrysalis")) for t in rest)
+    clk_on = "CLK" in opts or (board_clk and "NoCLK" not in opts)
+    opts -= {"CLK", "NoCLK"}
+    if clk_on:
+        opts.add("CLK")
     return {
         "role": role,
         "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() != "nosleepclk"
                           and not t.startswith("StackedSmol_"))
                  or ("ProMicro" if any(t.lower().startswith("stackedsmol") for t in rest) else "Standard"),
-        "options": (frozenset({"SW0"}) if any(t.lower().startswith("stackedsmol") for t in rest) else frozenset())
-                   | frozenset(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES)
-                   | frozenset(t for t in rest if t.startswith("StackedSmol_"))
-                   | (frozenset({"NoSleep", "CLK"}) if any(t.lower() == "nosleepclk" for t in rest) else frozenset()),
+        "options": frozenset(opts) | frozenset(t for t in rest if t.startswith("StackedSmol_")),
         "ext": ext,
         "name": name,
     }
