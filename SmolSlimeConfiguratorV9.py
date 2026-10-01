@@ -152,7 +152,7 @@ def fetch_latest_firmware_assets():
 # Start base window, size & name
 app = ctk.CTk()
 app.title("SmolSlime Configurator")
-app.geometry("1010x500")
+app.geometry("1080x500")
 
 # Overdone tooltip overlay
 class ToolTip:
@@ -621,7 +621,7 @@ if current_os == "Darwin":
 else:
     mac_or_other = "Right"
     
-def open_firmware_popup():
+def open_firmware_popup(target=None):
     fw_buttons = {}
     global firmware_urls
     popup = ctk.CTkToplevel(app)
@@ -718,7 +718,7 @@ def open_firmware_popup():
 
 
     def select_fw(fw):
-        selected_firmware.set(fw)
+        (target or selected_firmware).set(fw)
         popup.destroy()
 
     def update_list(*args):
@@ -1054,7 +1054,7 @@ multi_win = None
 def open_multiflash_window():
     global multi_win
     if not sys.platform.startswith("linux"):
-        append_text("Mehrere Tracker flashen gibt es nur unter Linux.\n", "error")
+        append_text("Die Geräteverwaltung gibt es nur unter Linux.\n", "error")
         return
     if multi_win is not None and multi_win.winfo_exists():
         multi_win.focus()
@@ -1062,38 +1062,58 @@ def open_multiflash_window():
 
     win = ctk.CTkToplevel(app)
     multi_win = win
-    win.title("Mehrere Tracker flashen")
-    win.geometry("700x600")
+    win.title("Geräteverwaltung")
+    win.geometry("700x720")
     win.transient(app)
 
     rows = []
     label_to_port = {}
-    fw_mode = tk.StringVar(value="list")
-    custom_uf2 = {"path": None}
+    dongle_fw_var = tk.StringVar(value="Select Firmware")
     clear_var = tk.BooleanVar(value=False)
     busy = {"on": False}
 
     def ui(fn):
         app.after(0, fn)
 
-    # Firmware
+    # Firmware: Tracker und Dongle brauchen verschiedene Dateien
     fw_frame = ctk.CTkFrame(win)
     fw_frame.pack(fill="x", padx=10, pady=(10, 5))
-    ctk.CTkLabel(fw_frame, text="Firmware", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, sticky="w", padx=5, pady=(5, 0))
-    ctk.CTkRadioButton(fw_frame, text="Aus der Liste:", variable=fw_mode, value="list").grid(row=1, column=0, sticky="w", padx=5, pady=3)
-    ctk.CTkButton(fw_frame, textvariable=selected_firmware, command=open_firmware_popup, width=320).grid(row=1, column=1, sticky="w", padx=5, pady=3)
-    ctk.CTkRadioButton(fw_frame, text="Eigene .uf2:", variable=fw_mode, value="custom").grid(row=2, column=0, sticky="w", padx=5, pady=3)
 
-    def pick_uf2():
-        path = filedialog.askopenfilename(parent=win, title="UF2-Datei wählen", filetypes=[("UF2 files", "*.uf2")])
-        if path:
-            custom_uf2["path"] = path
-            fw_mode.set("custom")
-            custom_btn.configure(text=os.path.basename(path))
+    def firmware_picker(row, title, list_var):
+        mode = tk.StringVar(value="list")
+        custom = {"path": None}
+        ctk.CTkLabel(fw_frame, text=title, font=ctk.CTkFont(weight="bold")).grid(row=row, column=0, sticky="w", padx=5, pady=(5, 0))
+        ctk.CTkRadioButton(fw_frame, text="Aus der Liste:", variable=mode, value="list").grid(row=row + 1, column=0, sticky="w", padx=5, pady=3)
+        ctk.CTkButton(fw_frame, textvariable=list_var, command=lambda: open_firmware_popup(list_var), width=320).grid(row=row + 1, column=1, sticky="w", padx=5, pady=3)
+        ctk.CTkRadioButton(fw_frame, text="Eigene .uf2:", variable=mode, value="custom").grid(row=row + 2, column=0, sticky="w", padx=5, pady=3)
+        btn = ctk.CTkButton(fw_frame, text="Datei wählen…", width=320)
+        btn.grid(row=row + 2, column=1, sticky="w", padx=5, pady=3)
 
-    custom_btn = ctk.CTkButton(fw_frame, text="Datei wählen…", command=pick_uf2, width=320)
-    custom_btn.grid(row=2, column=1, sticky="w", padx=5, pady=3)
-    ctk.CTkCheckBox(fw_frame, text="Kopplungsdaten vorher löschen (danach neu koppeln)", variable=clear_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(3, 8))
+        def pick():
+            path = filedialog.askopenfilename(parent=win, title="UF2-Datei wählen", filetypes=[("UF2 files", "*.uf2")])
+            if path:
+                custom["path"] = path
+                mode.set("custom")
+                btn.configure(text=os.path.basename(path))
+        btn.configure(command=pick)
+
+        def resolve():
+            if mode.get() == "custom":
+                if not custom["path"]:
+                    return None, None, "keine .uf2-Datei gewählt"
+                src, is_url = custom["path"], False
+            else:
+                src, is_url = firmware_urls.get(list_var.get()), True
+                if not src:
+                    return None, None, "erst eine aus der Liste wählen"
+            if not src.lower().endswith(".uf2"):
+                return None, None, "geht nur mit .uf2-Dateien"
+            return src, is_url, None
+        return resolve
+
+    resolve_tracker_fw = firmware_picker(0, "Tracker-Firmware", selected_firmware)
+    ctk.CTkCheckBox(fw_frame, text="Kopplungsdaten der Tracker vorher löschen (danach neu koppeln)", variable=clear_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(3, 8))
+    resolve_dongle_fw = firmware_picker(4, "Dongle-Firmware", dongle_fw_var)
 
     # Trackerliste
     list_frame = ctk.CTkScrollableFrame(win, height=280)
@@ -1146,6 +1166,15 @@ def open_multiflash_window():
             if not p["receiver"] and lbl not in used:
                 add_row(lbl)
 
+    def add_dongle():
+        refresh_choices()
+        lbl = next((l for l, p in label_to_port.items() if p["receiver"]), None)
+        if not lbl:
+            info_label.configure(text="Kein Dongle gefunden.", text_color="red")
+            return
+        if all(r["var"].get() != lbl for r in rows):
+            add_row(lbl)
+
     def connect_all():
         if busy["on"]:
             return
@@ -1173,40 +1202,36 @@ def open_multiflash_window():
     def flash_all():
         if busy["on"]:
             return
-        targets = [r for r in rows if r["dev"] and r["dev"].connected and not r["dev"].is_dongle]
+        targets = [r for r in rows if r["dev"] and r["dev"].connected]
         if not targets:
             info_label.configure(text="Erst „Alle verbinden“ drücken.", text_color="red")
             return
-        if fw_mode.get() == "custom":
-            src = custom_uf2["path"]
-            if not src:
-                info_label.configure(text="Keine .uf2-Datei gewählt.", text_color="red")
-                return
-            is_url = False
-        else:
-            src = firmware_urls.get(selected_firmware.get())
-            if not src:
-                info_label.configure(text="Erst eine Firmware aus der Liste wählen.", text_color="red")
-                return
-            is_url = True
-        if not src.lower().endswith(".uf2"):
-            info_label.configure(text="Mehrfach-Flashen geht nur mit .uf2-Dateien.", text_color="red")
-            return
+        jobs = {}
+        for r in targets:
+            r["kind"] = "dongle" if r["dev"].is_receiver else "tracker"
+            if r["kind"] not in jobs:
+                src, is_url, err = (resolve_dongle_fw if r["kind"] == "dongle" else resolve_tracker_fw)()
+                if err:
+                    info_label.configure(text=f"{'Dongle' if r['kind'] == 'dongle' else 'Tracker'}-Firmware: {err}.", text_color="red")
+                    return
+                jobs[r["kind"]] = (src, is_url)
         busy["on"] = True
         for b in action_buttons:
             b.configure(state="disabled")
-        threading.Thread(target=flash_worker, args=(targets, src, is_url, clear_var.get()), daemon=True).start()
+        threading.Thread(target=flash_worker, args=(targets, jobs, clear_var.get()), daemon=True).start()
 
-    def flash_worker(targets, src, is_url, clear):
+    def flash_worker(targets, jobs, clear):
         try:
-            fw_path = src
-            if is_url:
-                ui(lambda: info_label.configure(text="Lade Firmware…", text_color="gray"))
-                fw_path = os.path.join(tempfile.gettempdir(), os.path.basename(src))
-                response = requests.get(src, stream=True, timeout=30)
-                response.raise_for_status()
-                with open(fw_path, "wb") as f:
-                    shutil.copyfileobj(response.raw, f)
+            paths = {}
+            for kind, (src, is_url) in jobs.items():
+                paths[kind] = src
+                if is_url:
+                    ui(lambda: info_label.configure(text="Lade Firmware…", text_color="gray"))
+                    paths[kind] = os.path.join(tempfile.gettempdir(), os.path.basename(src))
+                    response = requests.get(src, stream=True, timeout=30)
+                    response.raise_for_status()
+                    with open(paths[kind], "wb") as f:
+                        shutil.copyfileobj(response.raw, f)
 
             before = set(find_usb_drives())
             for r in targets:
@@ -1215,7 +1240,7 @@ def open_multiflash_window():
                 r["location"] = dev.location
                 try:
                     with ser_lock:
-                        if clear:
+                        if clear and r["kind"] == "tracker":  # beim Dongle wuerde clear alle Kopplungen loeschen
                             dev.ser.write(b"clear\n")
                             time.sleep(0.5)
                         dev.ser.write(b"dfu\n")
@@ -1241,6 +1266,7 @@ def open_multiflash_window():
                 time.sleep(1)
 
             def copy_one(r, mount):
+                fw_path = paths[r["kind"]]
                 try:
                     dest = os.path.join(mount, os.path.basename(fw_path))
                     with open(fw_path, "rb") as s, open(dest, "wb") as d:
@@ -1280,7 +1306,7 @@ def open_multiflash_window():
 
             ok = len(found) - len(waiting)
             ui(lambda: info_label.configure(text=f"{ok} von {len(targets)} fertig.", text_color="green" if ok == len(targets) else "orange"))
-            ui(lambda: append_text(f"Mehrfach-Flash: {ok} von {len(targets)} Trackern mit {os.path.basename(fw_path)} geflasht.\n", "success"))
+            ui(lambda: append_text(f"Geräteverwaltung: {ok} von {len(targets)} Geräten geflasht.\n", "success"))
         except Exception as e:
             ui(lambda e=e: info_label.configure(text=f"Fehler: {e}", text_color="red"))
         finally:
@@ -1294,19 +1320,22 @@ def open_multiflash_window():
     btn_frame.pack(fill="x", padx=10, pady=5)
     b_add = ctk.CTkButton(btn_frame, text="+ Tracker", width=100, command=add_row)
     b_add.pack(side="left", padx=5, pady=5)
-    b_all = ctk.CTkButton(btn_frame, text="Alle erkannten hinzufügen", command=add_all_detected)
+    b_all = ctk.CTkButton(btn_frame, text="Alle erkannten", width=110, command=add_all_detected)
     b_all.pack(side="left", padx=5, pady=5)
+    b_dongle = ctk.CTkButton(btn_frame, text="+ Dongle", width=90, command=add_dongle)
+    b_dongle.pack(side="left", padx=5, pady=5)
     b_flash = ctk.CTkButton(btn_frame, text="⬇ Alle flashen", command=flash_all, fg_color="green", hover_color="#006400")
     b_flash.pack(side="right", padx=5, pady=5)
     b_conn = ctk.CTkButton(btn_frame, text="Alle verbinden", command=connect_all)
     b_conn.pack(side="right", padx=5, pady=5)
-    action_buttons = [b_add, b_all, b_flash, b_conn]
+    action_buttons = [b_add, b_all, b_dongle, b_flash, b_conn]
+    ToolTip(b_dongle, "Dongle hinzufügen – er bekommt die Dongle-Firmware")
     ToolTip(b_add, "Weiteren Tracker hinzufügen")
-    ToolTip(b_all, "Alle angesteckten Tracker übernehmen (ohne Empfänger)")
+    ToolTip(b_all, "Alle angesteckten Tracker übernehmen (ohne Dongle)")
     ToolTip(b_conn, "Alle Tracker in der Liste verbinden")
     ToolTip(b_flash, "Alle verbundenen Tracker in den Bootloader schicken und die Firmware aufspielen")
 
-    info_label = ctk.CTkLabel(win, text="Tracker per USB anstecken, mit + hinzufügen, verbinden, flashen.", text_color="gray")
+    info_label = ctk.CTkLabel(win, text="Geräte per USB anstecken, hinzufügen, verbinden, flashen.", text_color="gray")
     info_label.pack(fill="x", padx=10, pady=(0, 10))
 
     def on_close():
@@ -1325,9 +1354,9 @@ btn_download_fw = ctk.CTkButton(top_frame, text="⬇ Firmware", width=80, comman
 btn_download_fw.pack(side="left", padx=5)
 ToolTip(btn_download_fw, "Upgrade your firmware!")
 
-btn_multi_fw = ctk.CTkButton(top_frame, text="⧉ Mehrere", width=80, command=open_multiflash_window)
+btn_multi_fw = ctk.CTkButton(top_frame, text="⧉ Geräteverwaltung", width=80, command=open_multiflash_window)
 btn_multi_fw.pack(side="left", padx=5)
-ToolTip(btn_multi_fw, "Mehrere Tracker auf einmal flashen")
+ToolTip(btn_multi_fw, "Tracker und Dongle verwalten und auf einmal flashen")
 
 status_label = ctk.CTkLabel(top_frame, text="Not connected", text_color="red")
 status_label.pack(side="left", padx=10)
