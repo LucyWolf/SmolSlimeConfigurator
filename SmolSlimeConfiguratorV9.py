@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.31"
+APP_VERSION = "1.0.32"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -2276,11 +2276,13 @@ def open_multiflash_window():
             dev = get_or_add_device(info)
             dev.manual_off = False
             r["dev"] = dev
-            if not role_matches(dev.is_receiver):
-                set_status(r, "passt nicht zum Gerätetyp", "orange")
-                continue
             if dev.connected or connect_device(dev, ask=not asked, parent=win):
-                set_status(r, f"verbunden ({device_name(dev)})", "green")
+                if role_matches(dev.is_receiver):
+                    set_status(r, f"verbunden ({device_name(dev)})", "green")
+                else:
+                    # z.B. ProMicro mit Tracker-Firmware soll Dongle werden (oder umgekehrt)
+                    set_status(r, f"verbunden ({device_name(dev)}) – wird zum "
+                                  f"{'Dongle' if st['role'] == 'dongle' else 'Tracker'} umgeflasht", "orange")
                 continue
             e = dev.last_error
             if e is not None and is_permission_error(e):
@@ -2289,7 +2291,7 @@ def open_multiflash_window():
         update_next3()
 
     def valid_targets():
-        return [r for r in rows if r["dev"] and r["dev"].connected and role_matches(r["dev"].is_receiver)]
+        return [r for r in rows if r["dev"] and r["dev"].connected]
 
     b_add = ctk.CTkButton(dev_bar, text="+ Gerät", width=90, command=add_row)
     b_add.pack(side="left", padx=(0, 5))
@@ -2401,6 +2403,8 @@ def open_multiflash_window():
         flash_ctl.update(info=info, start=start, back=back)
 
         # Solange nicht geflasht wird: pruefen, ob die Geraete noch dran sind (abgezogen -> Fehler statt nichts)
+        watch_msgs = {"none": "Kein Gerät verbunden – Gerät anstecken und in Schritt 3 verbinden."}
+
         def watch():
             if not f5.winfo_exists() or cur["i"] != 4 or st["busy"] or not start.winfo_exists():
                 return
@@ -2410,15 +2414,17 @@ def open_multiflash_window():
                     ok = r["dev"].connected
                     r["status2"].configure(text=f"{device_name(r['dev'])}: {'bereit' if ok else 'getrennt – abgezogen?'}",
                                            text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"] if ok else "red")
+            # Nur eigene Hinweise ueberschreiben, nicht z.B. "Abgebrochen" nach der Sicherheitsfrage
+            own = info.cget("text") in ("", watch_msgs["none"]) or info.cget("text").endswith("übersprungen.")
             if (not targets or len(gone) == len(targets)) and not pre:
-                info.configure(text="Kein Gerät verbunden – Gerät anstecken und in Schritt 3 verbinden.",
-                               text_color="red")
+                info.configure(text=watch_msgs["none"], text_color="red")
                 start.configure(state="disabled")
             else:
-                if gone:
-                    info.configure(text=f"{len(gone)} Gerät(e) getrennt, die werden übersprungen.", text_color="orange")
-                else:
-                    info.configure(text="", text_color=FW_DIM)
+                if own:
+                    if gone:
+                        info.configure(text=f"{len(gone)} Gerät(e) getrennt, die werden übersprungen.", text_color="orange")
+                    else:
+                        info.configure(text="", text_color=FW_DIM)
                 start.configure(state="normal")
             win.after(1000, watch)
         watch()
@@ -2441,12 +2447,14 @@ def open_multiflash_window():
         # Sicherung gegen falsche Firmware: Board der Datei mit dem Namen des Geraets vergleichen
         board = st["asset"].get("board") or st.get("board") or ""
         odd = [device_name(r["dev"]) for r in targets
-               if r["dev"].product and board and not guess_board(r["dev"].product, [board])]
+               if (r["dev"].product and board and not guess_board(r["dev"].product, [board]))
+               or not role_matches(r["dev"].is_receiver)]
         if odd:
             from tkinter import messagebox
             if not messagebox.askyesno(
                     "Passt die Firmware?",
-                    f"Die Datei ist für „{board.replace('_', ' ')}“, aber diese Geräte melden sich anders:\n"
+                    f"Die Datei ist für „{board.replace('_', ' ')}“ "
+                    f"({'Dongle' if st['role'] == 'dongle' else 'Tracker'}), aber diese Geräte melden sich anders:\n"
                     + "\n".join(f"– {n}" for n in odd) + "\n\nTrotzdem flashen?", default="no", parent=win):
                 flash_ctl["info"].configure(text="Abgebrochen – Firmware passt evtl. nicht zum Gerät.", text_color="orange")
                 return
