@@ -57,7 +57,7 @@ SETTINGS_PATH = get_settings_path()
 
 default_settings = {
     "theme": "dark",
-    "accent": "dark-blue",
+    "accent": "slimevr",
     "tooltips": True,
     "favorites": ["Custom (User provided .uf2 / .hex)"],
     "seen_favorite_hint": False,
@@ -104,9 +104,65 @@ def save_settings():
     with open(SETTINGS_PATH, "w") as f:
         json.dump(settings, f)
 
+# Farbschema wie das DIY Firmware-Tool (Optik des SlimeVR-Servers): Marineblau,
+# Kacheln in Blaugrau, Lila fuer Auswahl und Hauptknoepfe. Wird auf das
+# eingebaute dark-blue-Schema gelegt und als Datei neben die Einstellungen geschrieben.
+SV_PURPLE = "#7c4dcc"
+SV_PURPLE_H = "#6a3fb5"
+SV_TEXT = ["#16212e", "#e6edf5"]
+SV_BUTTON = ["#c5d1df", "#1d3a57"]
+SV_BUTTON_H = ["#b3c2d4", "#264b70"]
+SV_BORDER = ["#9fb0c3", "#2a4561"]
+SV_FIELD = ["#f4f7fb", "#0b1a2a"]
+SLIMEVR_THEME = {
+    "CTk": {"fg_color": ["#e9eef5", "#0b1724"]},
+    "CTkToplevel": {"fg_color": ["#e9eef5", "#0b1724"]},
+    "CTkFrame": {"fg_color": ["#dce4ee", "#0f2133"], "top_fg_color": ["#cfd9e5", "#16304a"], "border_color": SV_BORDER},
+    "CTkButton": {"fg_color": SV_BUTTON, "hover_color": SV_BUTTON_H, "border_color": SV_BORDER,
+                  "text_color": SV_TEXT, "text_color_disabled": ["gray55", "gray50"]},
+    "CTkLabel": {"text_color": SV_TEXT},
+    "CTkEntry": {"fg_color": SV_FIELD, "border_color": SV_BORDER, "text_color": SV_TEXT},
+    "CTkCheckBox": {"fg_color": SV_PURPLE, "hover_color": SV_PURPLE_H, "border_color": SV_BORDER, "text_color": SV_TEXT},
+    "CTkRadioButton": {"fg_color": SV_PURPLE, "hover_color": SV_PURPLE_H, "border_color": SV_BORDER, "text_color": SV_TEXT},
+    "CTkSwitch": {"progress_color": SV_PURPLE, "text_color": SV_TEXT},
+    "CTkProgressBar": {"fg_color": SV_BUTTON, "progress_color": SV_PURPLE},
+    "CTkSlider": {"button_color": SV_PURPLE, "button_hover_color": SV_PURPLE_H},
+    "CTkOptionMenu": {"fg_color": SV_BUTTON, "button_color": ["#b3c2d4", "#16304a"],
+                      "button_hover_color": ["#a3b4c8", "#264b70"], "text_color": SV_TEXT},
+    "CTkComboBox": {"fg_color": SV_FIELD, "border_color": SV_BORDER, "button_color": SV_BORDER, "text_color": SV_TEXT},
+    "CTkScrollbar": {"button_color": SV_BORDER, "button_hover_color": ["#8193a8", "#36597d"]},
+    "CTkSegmentedButton": {"fg_color": ["#c5d1df", "#16304a"], "selected_color": SV_PURPLE,
+                           "selected_hover_color": SV_PURPLE_H, "unselected_color": ["#c5d1df", "#16304a"],
+                           "unselected_hover_color": SV_BUTTON_H, "text_color": ["#ffffff", "#e6edf5"]},
+    "CTkTextbox": {"fg_color": ["#f4f7fb", "#08131f"], "border_color": SV_BORDER, "text_color": SV_TEXT,
+                   "scrollbar_button_color": SV_BORDER, "scrollbar_button_hover_color": ["#8193a8", "#36597d"]},
+    "CTkScrollableFrame": {"label_fg_color": ["#cfd9e5", "#16304a"]},
+    "DropdownMenu": {"fg_color": ["#e9eef5", "#0f2133"], "hover_color": ["#cfd9e5", "#1d3a57"], "text_color": SV_TEXT},
+}
+
+def apply_accent(name):
+    if name != "slimevr":
+        ctk.set_default_color_theme(name)
+        return
+    import customtkinter
+    base = os.path.join(os.path.dirname(customtkinter.__file__), "assets", "themes", "dark-blue.json")
+    with open(base) as f:
+        theme = json.load(f)
+    for widget, colors in SLIMEVR_THEME.items():
+        theme.setdefault(widget, {}).update(colors)
+    path = os.path.join(os.path.dirname(SETTINGS_PATH), "theme_slimevr.json")
+    with open(path, "w") as f:
+        json.dump(theme, f)
+    ctk.set_default_color_theme(path)
+
 load_settings()
+# Bestehende Installationen bekommen das neue Schema einmal als Standard
+if settings.get("theme_version", 0) < 1:
+    settings["accent"] = "slimevr"
+    settings["theme_version"] = 1
+    save_settings()
 ctk.set_appearance_mode(settings["theme"])
-ctk.set_default_color_theme(settings["accent"])
+apply_accent(settings["accent"])
 
 if sys.platform.startswith("linux"):
     set_linux_scaling()
@@ -158,7 +214,7 @@ def fetch_latest_firmware_assets():
 # Start base window, size & name
 app = ctk.CTk()
 app.title(f"SmolSlime Configurator v{APP_VERSION}")
-app.geometry("1080x500")
+app.geometry("1080x640")
 
 # Overdone tooltip overlay
 class ToolTip:
@@ -350,8 +406,8 @@ def refresh_sidebar():
         active = dev is active_device
         dev.button.configure(
             text=device_name(dev),
-            fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"] if active else ("gray75", "gray25"),
-            text_color=ctk.ThemeManager.theme["CTkButton"]["text_color"] if dev.connected else "gray50",
+            fg_color=SV_PURPLE if active else FW_CARD2,
+            text_color=("white" if active else ctk.ThemeManager.theme["CTkButton"]["text_color"]) if dev.connected else "gray50",
         )
         dev.button.pack(fill="x", pady=2)
 
@@ -593,6 +649,13 @@ def on_tracker_change(choice):
 
 
 # Top UI | Yk the serial buttons
+# Kopfzeile wie im DIY Firmware-Tool
+header = ctk.CTkFrame(app, fg_color="transparent")
+header.pack(fill="x", padx=16, pady=(12, 0))
+ctk.CTkLabel(header, text="SmolSlime Configurator", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+ctk.CTkLabel(header, text=f"Tracker und Dongle verbinden, einstellen und flashen · v{APP_VERSION}",
+             text_color=("gray35", "gray65")).pack(anchor="w")
+
 top_frame = ctk.CTkFrame(app)
 top_frame.pack(pady=5, padx=10, fill="x")
 
@@ -609,7 +672,8 @@ btn_refresh = ctk.CTkButton(top_frame, text="↻", width=10, command=refresh_por
 btn_refresh.pack(side="left", padx=5)
 ToolTip(btn_refresh, "Refresh serial port")
 
-btn_connect = ctk.CTkButton(top_frame, text="Connect", command=connect_to_port)
+btn_connect = ctk.CTkButton(top_frame, text="Connect", command=connect_to_port,
+                            fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
 btn_connect.pack(side="left", padx=5)
 ToolTip(btn_connect, "Connect to the selected serial port")
 
@@ -2102,7 +2166,8 @@ btn_download_fw = ctk.CTkButton(top_frame, text="⬇ Firmware", width=80, comman
 btn_download_fw.pack(side="left", padx=5)
 ToolTip(btn_download_fw, "Upgrade your firmware!")
 
-btn_multi_fw = ctk.CTkButton(top_frame, text="DIY Firmware-Tool", width=80, command=open_multiflash_window)
+btn_multi_fw = ctk.CTkButton(top_frame, text="DIY Firmware-Tool", width=80, command=open_multiflash_window,
+                             fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
 btn_multi_fw.pack(side="left", padx=5)
 ToolTip(btn_multi_fw, "Tracker konfigurieren und auf einmal flashen")
 
@@ -2261,7 +2326,7 @@ def toggle_theme(choice):
 
 def toggle_accent(choice):
     settings["accent"] = choice
-    ctk.set_default_color_theme(choice)
+    apply_accent(choice)
     save_settings()
 
 def toggle_tooltips():
@@ -2283,7 +2348,7 @@ theme_menu.set(settings["theme"])
 theme_menu.grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
 ctk.CTkLabel(appearance_frame, text="Accent Colour:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-accent_menu = ctk.CTkOptionMenu(appearance_frame, values=["blue", "green", "dark-blue"], command=toggle_accent)
+accent_menu = ctk.CTkOptionMenu(appearance_frame, values=["slimevr", "blue", "green", "dark-blue"], command=toggle_accent)
 accent_menu.set(settings["accent"])
 accent_menu.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 ToolTip(accent_menu, "Requires app restart")
@@ -2394,7 +2459,8 @@ console_row = ctk.CTkFrame(app, fg_color="transparent")
 
 sidebar = ctk.CTkFrame(console_row, width=130)
 sidebar.pack(side="left", fill="y", padx=(0, 5))
-btn_pair_all = ctk.CTkButton(sidebar, text="🔗 Koppeln", width=110, command=pair_all)
+btn_pair_all = ctk.CTkButton(sidebar, text="🔗 Koppeln", width=110, command=pair_all,
+                             fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
 btn_pair_all.pack(side="bottom", fill="x", padx=5, pady=5)
 device_list = ctk.CTkScrollableFrame(sidebar, width=110, fg_color="transparent")
 device_list.pack(fill="both", expand=True, padx=2, pady=(2, 0))
