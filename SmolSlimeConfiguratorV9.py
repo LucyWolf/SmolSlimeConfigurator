@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.33"
+APP_VERSION = "1.0.34"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -2895,16 +2895,11 @@ class NordicDfu:
             raise NordicDfuError(NORDIC_RES.get(resp[2], f"Fehler 0x{resp[2]:02X}"))
         return resp[3:]
 
-    def connect(self, timeout=10.0):
-        deadline, ping_id = time.time() + timeout, 0
-        while time.time() < deadline:
-            ping_id = (ping_id + 1) % 256
-            self.ser.write(_slip(bytes([0x09, ping_id])))
-            resp = self._read(1.0)
-            if resp and resp[:3] == bytes([0x60, 0x09, 0x01]) and resp[3:4] == bytes([ping_id]):
-                break
-        else:
-            raise NordicDfuError("Bootloader antwortet nicht")
+    # Wie nrfutil "dfu usb-serial": 3 s warten, kein Ping (aeltere Nordic-Bootloader kennen ihn nicht),
+    # dann Bestaetigungen aus und MTU erfragen
+    def connect(self):
+        time.sleep(3.0)
+        self.ser.reset_input_buffer()
         self._cmd(bytes([0x02]) + struct.pack("<H", 0))            # PRN aus
         self.mtu = struct.unpack("<H", self._cmd(bytes([0x07]), size=2))[0]
 
