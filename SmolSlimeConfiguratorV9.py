@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.19"
+APP_VERSION = "1.0.20"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1223,8 +1223,9 @@ FW_OPTION_TOKENS = {t for _, _, toks in FW_OPTION_GROUPS for t in toks}
 # Firmware und das Build-Skript der CI (was jede Option beim Bauen umschaltet).
 FW_OPTION_HELP = {
     "variant": "Wie der Tracker um den Controller herum aufgebaut ist. „Stacked Smol“: der Sensor sitzt huckepack "
-               "direkt auf dem ProMicro. Chrysalis ist eine fertige Tracker-Platine (SPI, mit Taster). „Normaler ProMicro“: keine "
-               "besondere Platine, Sensor und ProMicro sind z. B. mit Kabeln verbunden.",
+               "direkt auf dem ProMicro. Chrysalis ist eine fertige Tracker-Platine (SPI, mit Taster). „Normal (Non-Stacked)“: "
+               "so heißt es auch in der SlimeVR-Doku – der Sensor sitzt nicht auf dem ProMicro, sondern ist z. B. "
+               "mit Kabeln verbunden.",
     "bus": "Wie der Bewegungssensor mit dem Controller verbunden ist. SPI ist schneller und weniger störanfällig "
            "und wird deshalb empfohlen. I2C braucht weniger Drähte und funktioniert auch. Wichtig: Die Wahl muss "
            "zu deiner Verdrahtung passen, sonst wird der Sensor nicht gefunden.",
@@ -1252,7 +1253,7 @@ FW_OPTION_HELP = {
 
 FW_CHOICE_LABELS = {
     "bus": {"SPI": "SPI (empfohlen)", "I2C": "I2C"},
-    "variant": {"StackedSmol": "Stacked Smol", None: "Normaler ProMicro"},
+    "variant": {"StackedSmol": "Stacked Smol", None: "Normal (Non-Stacked)"},
 }
 
 # Laufzeit-Einstellungen der offiziellen Firmware (write_config <name> <wert>).
