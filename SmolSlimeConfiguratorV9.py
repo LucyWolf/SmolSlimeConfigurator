@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.0.10"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1208,7 +1208,7 @@ FW_OPTION_GROUPS = [
     ("variant", "Bauform", ["StackedSmol", "Chrysalis", "Bao"]),
     ("bus", "Sensor-Anschluss", ["SPI", "I2C", "smSPI"]),
     ("mag", "Magnetometer", ["Mag"]),
-    ("clk", "Externer Sensor-Takt", ["CLK", "NoCLK"]),
+    ("clk", "Sensor-Takt (CLKIN/INT2)", ["CLK", "NoCLK"]),
     ("sleep", "Schlafmodus aus", ["NoSleep"]),
     ("sw0", "Taster an SW0", ["SW0"]),
     ("tdma", "Funkmodus TDMA", ["TDMA"]),
@@ -1229,10 +1229,11 @@ FW_OPTION_HELP = {
     "mag": "Ein Magnetometer ist ein Kompass-Sensor. Er verhindert, dass sich die Drehung des Trackers mit der Zeit "
            "langsam verschiebt (Drift). Nur einschalten, wenn wirklich einer verbaut ist. In der Nähe von Metall, "
            "Magneten oder Lautsprechern kann er stören.",
-    "clk": "Manche Sensoren bekommen vom Controller einen eigenen Takt über eine extra Leitung. Das macht die "
-           "Zeitmessung genauer und spart etwas Strom. Nur einschalten, wenn diese Leitung (CLK) bei dir "
-           "angeschlossen ist. „Aus“ schaltet sie ausdrücklich ab, „Platinen-Standard“ lässt es so, wie die Platine "
-           "es vorsieht.",
+    "clk": "Der Controller gibt über eine eigene Leitung einen Takt (32,768 kHz) an den Sensor. Das macht die "
+           "Zeitmessung genauer und spart etwas Strom. Am ICM-Sensor gehört diese Leitung an CLKIN – das ist "
+           "derselbe Pin wie INT2, nicht INT1 (INT1 ist der normale Interrupt). Am Controller kommt der Takt beim "
+           "ProMicro aus P0.20, beim Stacked Smol aus P1.11. Nur einschalten, wenn die Leitung angeschlossen ist. "
+           "„Platinen-Standard“: beim normalen ProMicro aus, beim Stacked Smol an.",
     "sleep": "Normalerweise legt sich der Tracker schlafen, wenn er still liegt, und wacht bei Bewegung wieder auf. "
              "Das spart viel Akku. Mit „Schlafmodus aus“ bleibt er immer wach: Er reagiert sofort, aber der Akku "
              "hält deutlich kürzer. Sinnvoll, wenn dein Sensor das Aufwecken durch Bewegung nicht kann.",
@@ -1257,8 +1258,8 @@ FW_SETTINGS = [
     ("Sensor", [
         ("sensor_use_mag", "Magnetometer benutzen", "bool", True, "", 1,
          "Schaltet den Kompass-Sensor ein oder aus, falls einer verbaut ist."),
-        ("use_sensor_clock", "Externen Sensor-Takt benutzen", "bool", True, "", 1,
-         "Nutzt die extra Taktleitung zum Sensor, falls angeschlossen."),
+        ("use_sensor_clock", "Sensor-Takt (CLKIN/INT2) benutzen", "bool", True, "", 1,
+         "Nutzt die Taktleitung zum CLKIN-Pin des Sensors (beim ICM derselbe Pin wie INT2), falls angeschlossen."),
         ("sensor_use_6_side_calibration", "6-Seiten-Kalibrierung", "bool", True, "", 1,
          "Genauere Kalibrierung des Beschleunigungssensors. Wird in der Konsole mit „6-side“ durchgeführt."),
         ("sensor_accel_odr", "Messrate Beschleunigung", "int", 100, "Hz", 1,
