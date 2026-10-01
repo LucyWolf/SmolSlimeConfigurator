@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -557,7 +557,7 @@ def watch_devices():
             ok = connect_device(dev, ask=not perm_state["asked"], quiet=True)
             if not ok and dev.last_error is not None and is_permission_error(dev.last_error):
                 perm_state["asked"] = True
-                append_text(f"{device_name(dev)}: keine Berechtigung für {dev.port}. Über „Connect“ einrichten.\n",
+                append_text(f"{device_name(dev)}: keine Berechtigung für {dev.port}. Über „Geräteverwaltung → Alle angesteckten verbinden“ einrichten.\n",
                             "error", dev)
             if ok and active_device is None:
                 select_device(dev)
@@ -694,12 +694,17 @@ header_text.pack(side="left")
 ctk.CTkLabel(header_text, text="SmolSlime Configurator", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
 ctk.CTkLabel(header_text, text=f"Tracker und Dongle verbinden, einstellen und flashen · v{APP_VERSION}",
              text_color=("gray35", "gray65")).pack(anchor="w")
-btn_check_update = ctk.CTkButton(header, text="Nach Updates suchen", width=170,
+# Werkzeuge oben rechts; die alte Leiste darunter wird nicht mehr angezeigt
+header_buttons = ctk.CTkFrame(header, fg_color="transparent")
+header_buttons.pack(side="right", anchor="n", pady=(4, 0))
+btn_check_update = ctk.CTkButton(header_buttons, text="Nach Updates suchen", width=170,
                                  command=lambda: check_for_update(manual=True))
-btn_check_update.pack(side="right", anchor="n", pady=(4, 0))
+btn_check_update.pack(side="right", padx=(5, 0))
 
 top_frame = ctk.CTkFrame(app)
-top_frame.pack(pady=5, padx=10, fill="x")
+# Die alte Leiste (Anschluss, Connect, Firmware) wird nicht mehr gezeigt: Geraete verbinden sich
+# selbst, geflasht wird ueber das DIY Firmware-Tool. Die Widgets bleiben, weil aeltere Funktionen
+# (connect_to_port, Status, Einzel-Flash) sie noch ansprechen.
 
 initial_ports = list_serial_ports()
 if not initial_ports:
@@ -2611,13 +2616,13 @@ btn_download_fw = ctk.CTkButton(top_frame, text="⬇ Firmware", width=80, comman
 btn_download_fw.pack(side="left", padx=5)
 ToolTip(btn_download_fw, "Upgrade your firmware!")
 
-btn_multi_fw = ctk.CTkButton(top_frame, text="DIY Firmware-Tool", width=80, command=open_multiflash_window,
+btn_multi_fw = ctk.CTkButton(header_buttons, text="DIY Firmware-Tool", width=80, command=open_multiflash_window,
                              fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
-btn_multi_fw.pack(side="left", padx=5)
+btn_multi_fw.pack(side="left", padx=5, before=btn_check_update)
 ToolTip(btn_multi_fw, "Tracker konfigurieren und auf einmal flashen")
 
-btn_devmgr = ctk.CTkButton(top_frame, text="Geräteverwaltung", width=80, command=open_device_manager)
-btn_devmgr.pack(side="left", padx=5)
+btn_devmgr = ctk.CTkButton(header_buttons, text="Geräteverwaltung", width=80, command=open_device_manager)
+btn_devmgr.pack(side="left", padx=5, before=btn_check_update)
 ToolTip(btn_devmgr, "Alle Geräte, Akku, Firmware und Einstellungen")
 
 status_label = ctk.CTkLabel(top_frame, text="Not connected", text_color="red")
@@ -2874,7 +2879,7 @@ def check_for_update(manual=False):
 def offer_update(tag, asset, notes):
     update_info.update(tag=tag, asset=asset, notes=notes)
     btn_update.configure(text=f"⬆ Update {tag}", state="normal")
-    btn_update.pack(side="left", padx=5, before=status_label)
+    btn_update.pack(side="left", padx=5, before=btn_multi_fw)
     append_text(f"Update verfügbar: {tag} (installiert: v{APP_VERSION}).\n", "success")
 
 def install_update():
@@ -2930,7 +2935,7 @@ def restart_app():
     app.destroy()
     os._exit(0)
 
-btn_update = ctk.CTkButton(top_frame, text="⬆ Update", width=80, fg_color="green", hover_color="#006400",
+btn_update = ctk.CTkButton(header_buttons, text="⬆ Update", width=80, fg_color="green", hover_color="#006400",
                            command=install_update)
 ToolTip(btn_update, "Neue Fassung herunterladen und neu starten")
 
