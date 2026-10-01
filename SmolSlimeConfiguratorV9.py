@@ -278,6 +278,7 @@ class Device:
         self.number = 0
         self.console = None
         self.button = None
+        self.listeners = []      # bekommen jede empfangene Zeile (z.B. Antwort auf write_config)
 
     @property
     def key(self):
@@ -1061,6 +1062,7 @@ FW_SOURCES = [
      "repo": "kounocom/SlimeNRF-Firmware-CI"},
     {"id": "jitingcn", "name": "SlimeVR-Tracker-nRF", "owner": "jitingcn", "badge": "Drittanbieter",
      "repo": "jitingcn/SlimeVR-Tracker-nRF"},
+    {"id": "all", "name": "Alle Quellen", "owner": "jeweils neueste", "badge": "Alle", "repo": "*"},
     {"id": "file", "name": "Eigene Datei", "owner": ".uf2 vom Rechner", "badge": "Datei", "repo": None},
 ]
 
@@ -1068,13 +1070,117 @@ FW_OPTION_GROUPS = [
     ("variant", "Bauform", ["Chrysalis", "Bao"]),
     ("bus", "Sensor-Anschluss", ["SPI", "I2C", "smSPI"]),
     ("mag", "Magnetometer", ["Mag"]),
-    ("clk", "Externer Takt", ["CLK", "NoCLK", "NoSleepCLK"]),
+    ("clk", "Externer Sensor-Takt", ["CLK", "NoCLK"]),
     ("sleep", "Schlafmodus aus", ["NoSleep"]),
     ("sw0", "Taster an SW0", ["SW0"]),
     ("tdma", "Funkmodus TDMA", ["TDMA"]),
     ("data", "Datensammlung (CDC)", ["DataCollect"]),
 ]
 FW_OPTION_TOKENS = {t for _, _, toks in FW_OPTION_GROUPS for t in toks}
+
+# Erklaerungen fuer Leute ohne Vorwissen. Grundlage: Kconfig der offiziellen
+# Firmware und das Build-Skript der CI (was jede Option beim Bauen umschaltet).
+FW_OPTION_HELP = {
+    "variant": "Nur wählen, wenn dein Tracker auf einer fertigen Chrysalis- oder Bao-Platine aufgebaut ist. "
+               "Hast du einen ProMicro selbst verdrahtet: „Platinen-Standard“.",
+    "bus": "Wie der Bewegungssensor mit dem Controller verbunden ist. SPI ist schneller und weniger störanfällig "
+           "und wird deshalb empfohlen. I2C braucht weniger Drähte und funktioniert auch. Wichtig: Die Wahl muss "
+           "zu deiner Verdrahtung passen, sonst wird der Sensor nicht gefunden. „SPI (Smol-Belegung)“ ist SPI mit "
+           "anderer Pin-Belegung – nur wählen, wenn dein Schaltplan das so vorgibt.",
+    "mag": "Ein Magnetometer ist ein Kompass-Sensor. Er verhindert, dass sich die Drehung des Trackers mit der Zeit "
+           "langsam verschiebt (Drift). Nur einschalten, wenn wirklich einer verbaut ist. In der Nähe von Metall, "
+           "Magneten oder Lautsprechern kann er stören.",
+    "clk": "Manche Sensoren bekommen vom Controller einen eigenen Takt über eine extra Leitung. Das macht die "
+           "Zeitmessung genauer und spart etwas Strom. Nur einschalten, wenn diese Leitung (CLK) bei dir "
+           "angeschlossen ist. „Aus“ schaltet sie ausdrücklich ab, „Platinen-Standard“ lässt es so, wie die Platine "
+           "es vorsieht.",
+    "sleep": "Normalerweise legt sich der Tracker schlafen, wenn er still liegt, und wacht bei Bewegung wieder auf. "
+             "Das spart viel Akku. Mit „Schlafmodus aus“ bleibt er immer wach: Er reagiert sofort, aber der Akku "
+             "hält deutlich kürzer. Sinnvoll, wenn dein Sensor das Aufwecken durch Bewegung nicht kann.",
+    "sw0": "Nur wählen, wenn an Pin SW0 ein Taster angeschlossen ist. Damit kannst du z. B. koppeln "
+           "(5 Sekunden halten) oder den Tracker ausschalten.",
+    "tdma": "Neuerer Funkmodus mit festen Zeitfenstern pro Tracker – kann bei vielen Trackern stabiler sein. "
+            "Achtung: Der Dongle braucht dann ebenfalls TDMA-Firmware, sonst verbinden sie sich nicht.",
+    "data": "Gibt zusätzlich Rohdaten über USB aus. Nur für Fehlersuche oder Entwicklung.",
+}
+
+FW_CHOICE_LABELS = {
+    "bus": {"SPI": "SPI (empfohlen)", "I2C": "I2C", "smSPI": "SPI (Smol-Belegung)", None: "Platinen-Standard"},
+    "variant": {None: "Platinen-Standard"},
+    "clk": {"CLK": "An", "NoCLK": "Aus", None: "Platinen-Standard"},
+}
+
+# Laufzeit-Einstellungen der offiziellen Firmware (write_config <name> <wert>).
+# (name, Beschriftung, Art, Standard in Anzeige-Einheit, Einheit, Faktor zur Firmware-Einheit, Erklaerung)
+FW_SETTINGS = [
+    ("Sensor", [
+        ("sensor_use_mag", "Magnetometer benutzen", "bool", True, "", 1,
+         "Schaltet den Kompass-Sensor ein oder aus, falls einer verbaut ist."),
+        ("use_sensor_clock", "Externen Sensor-Takt benutzen", "bool", True, "", 1,
+         "Nutzt die extra Taktleitung zum Sensor, falls angeschlossen."),
+        ("sensor_use_6_side_calibration", "6-Seiten-Kalibrierung", "bool", True, "", 1,
+         "Genauere Kalibrierung des Beschleunigungssensors. Wird in der Konsole mit „6-side“ durchgeführt."),
+        ("sensor_accel_odr", "Messrate Beschleunigung", "int", 100, "Hz", 1,
+         "Wie oft pro Sekunde gemessen wird. Höher = genauer, aber mehr Rechenzeit und Stromverbrauch."),
+        ("sensor_gyro_odr", "Messrate Gyroskop", "int", 200, "Hz", 1,
+         "Wie oft pro Sekunde die Drehung gemessen wird. Bei rauschenden Sensoren (BMI270, LSM6DS3TR-C) "
+         "ist ein niedrigerer Wert besser."),
+        ("sensor_accel_fs", "Messbereich Beschleunigung", "int", 4, "g", 1,
+         "Kleiner = feiner und rauschärmer, aber schnelle Bewegungen können „überlaufen“."),
+        ("sensor_gyro_fs", "Messbereich Gyroskop", "int", 1000, "°/s", 1,
+         "Kleiner = feiner, aber sehr schnelle Drehungen können „überlaufen“."),
+    ]),
+    ("Energie und Schlaf", [
+        ("use_imu_timeout", "Bei Stillstand schlafen", "bool", True, "", 1,
+         "Liegt der Tracker still, geht der Sensor in einen Schlafzustand. Spart viel Akku."),
+        ("imu_timeout_ramp_min", "Schlafen frühestens nach", "int", 5, "s", 1000,
+         "So lange muss der Tracker mindestens stillliegen, bevor er schläft."),
+        ("imu_timeout_ramp_max", "Schlafen spätestens nach", "int", 15, "s", 1000,
+         "Längste Wartezeit bei Stillstand, bevor er schläft."),
+        ("use_imu_wake_up", "Aufwecken durch Bewegung", "bool", True, "", 1,
+         "Der Sensor weckt den Tracker auf, sobald er bewegt wird."),
+        ("sensor_lp_timeout", "Stromsparmodus nach", "int", 500, "ms", 1,
+         "Nach so vielen Millisekunden ohne Bewegung misst der Sensor sparsamer."),
+        ("sensor_use_low_power_2", "Zusätzliche Sparmodi", "bool", False, "", 1,
+         "Noch sparsamer bei Stillstand, reagiert dafür minimal verzögert."),
+        ("delay_sleep_on_status", "Nicht schlafen bei Statusmeldung", "bool", True, "", 1,
+         "Verschiebt den Schlaf, solange eine Meldung anliegt oder gekoppelt wird."),
+    ]),
+    ("Zeitlimit bei Nichtbenutzung", [
+        ("use_active_timeout", "Zeitlimit benutzen", "bool", True, "", 1,
+         "Liegt der Tracker lange Zeit unbewegt herum (z. B. vergessen), legt er sich nach dem Zeitlimit "
+         "schlafen oder schaltet sich ganz aus."),
+        ("active_timeout_mode", "Danach", "enum", 0, "", {0: "Schlafen", 1: "Ausschalten"},
+         "Schlafen: wacht bei Bewegung wieder auf (braucht „Aufwecken durch Bewegung“). Ausschalten: muss "
+         "per Taster wieder eingeschaltet werden (braucht „Ausschalten per Taster“)."),
+        ("active_timeout_delay", "Zeitlimit", "int", 15, "min", 60000,
+         "Nach so vielen Minuten ohne Bewegung greift das Zeitlimit."),
+        ("active_timeout_threshold", "Schwelle", "int", 15, "s", 1000,
+         "Nach so vielen Sekunden Stillstand beginnt das Zeitlimit zu zählen."),
+    ]),
+    ("Taster", [
+        ("user_extra_actions", "Mehrfachdruck-Aktionen", "bool", False, "", 1,
+         "Mehrmals drücken zum Kalibrieren, Koppeln oder für den Bootloader."),
+        ("ignore_reset", "Reset-Taster ignorieren", "bool", True, "", 1,
+         "Der Reset-Taster löst keine Zusatzaktionen aus."),
+        ("user_shutdown", "Ausschalten per Taster", "bool", True, "", 1,
+         "Der Tracker lässt sich per Taster bzw. Reset ausschalten."),
+    ]),
+    ("LED", [
+        ("led_default_color", "Farbe im Normalbetrieb", "color", None, "", 1,
+         "Farbe der Status-LED, falls der Tracker eine RGB-LED hat."),
+    ]),
+    ("Funk und Akku", [
+        ("radio_tx_power", "Sendeleistung", "int", 8, "dBm", 1,
+         "Weniger = etwas weniger Reichweite, dafür längere Akkulaufzeit. Höchstwert meist 8."),
+        ("connection_timeout_delay", "Abschalten ohne Dongle nach", "int", 5, "min", 60000,
+         "Findet der Tracker keinen Dongle, schaltet er sich nach dieser Zeit ab."),
+        ("connection_over_hid", "Daten per USB-HID ausgeben", "bool", False, "", 1,
+         "Nur für Sonderfälle: Daten per USB statt nur per Funk."),
+        ("battery_low_runtime_threshold", "Akku-Warnung unter", "int", 3, "h", 3600000,
+         "Warnt, wenn die geschätzte Restlaufzeit darunter fällt."),
+    ]),
+]
 
 FW_BG = ("#e9eef5", "#0b1724")
 FW_CARD = ("#dce4ee", "#0f2133")
@@ -1101,8 +1207,9 @@ def parse_fw_name(name):
     rest = [t for t in tokens if t.lower() not in ("slimenrf", "tracker", "receiver", "uf2", "hex")]
     return {
         "role": role,
-        "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES) or "Standard",
-        "options": frozenset(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES),
+        "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() != "nosleepclk") or "Standard",
+        "options": frozenset(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES)
+                   | (frozenset({"NoSleep", "CLK"}) if any(t.lower() == "nosleepclk" for t in rest) else frozenset()),
         "ext": ext,
         "name": name,
     }
@@ -1111,7 +1218,7 @@ def fw_sources():
     sources = list(FW_SOURCES)
     m = re.search(r"repos/([^/]+)/([^/]+)", settings.get("custom_firmware_repo", "") or "")
     if m:
-        sources.insert(-1, {"id": "custom", "name": m.group(2), "owner": m.group(1), "badge": "Eigene",
+        sources.insert(-2, {"id": "custom", "name": m.group(2), "owner": m.group(1), "badge": "Eigene",
                             "repo": f"{m.group(1)}/{m.group(2)}"})
     return sources
 
@@ -1315,10 +1422,26 @@ def open_multiflash_window():
         update_next1()
 
         def work():
-            try:
-                rels, err = fetch_releases(src["repo"]), None
-            except Exception as e:
-                rels, err = [], e
+            if src["repo"] == "*":
+                merged, err = [], None
+                for other in fw_sources():
+                    if other["repo"] in (None, "*"):
+                        continue
+                    try:
+                        rels = fetch_releases(other["repo"])
+                    except Exception as e:
+                        err = e
+                        continue
+                    if rels:
+                        merged += [dict(a, src=other, tag=rels[0]["tag"]) for a in rels[0]["assets"]]
+                rels = [{"tag": "neueste je Quelle", "assets": merged}] if merged else []
+                err = None if merged else err
+            else:
+                try:
+                    rels, err = fetch_releases(src["repo"]), None
+                    rels = [dict(rel, assets=[dict(a, src=src, tag=rel["tag"]) for a in rel["assets"]]) for rel in rels]
+                except Exception as e:
+                    rels, err = [], e
             ui(lambda: releases_loaded(src, rels, err))
         threading.Thread(target=work, daemon=True).start()
 
@@ -1335,7 +1458,7 @@ def open_multiflash_window():
             return
         ver_map.clear()
         for k, rel in enumerate(rels):
-            ver_map[rel["tag"] + ("  (neueste)" if k == 0 else "")] = rel
+            ver_map[rel["tag"] + ("  (neueste)" if k == 0 and src["repo"] != "*" else "")] = rel
         labels = list(ver_map)
         ver_menu.configure(values=labels, state="normal")
         ver_menu.set(labels[0])
@@ -1365,7 +1488,8 @@ def open_multiflash_window():
         if not pick:
             products = [d.product for d in devices if d.is_receiver == (st["role"] == "dongle")]
             products += [p["name"] for p in list_tracker_ports() if p["receiver"] == (st["role"] == "dongle")]
-            pick = next((b for b in (guess_board(p, boards) for p in products) if b), boards[0])
+            pick = next((b for b in (guess_board(p, boards) for p in products) if b),
+                        "ProMicro" if "ProMicro" in boards else boards[0])
         board_menu.configure(values=list(board_map), state="normal")
         board_menu.set(pick.replace("_", " "))
         set_board(pick)
@@ -1389,9 +1513,12 @@ def open_multiflash_window():
 
         box = ctk.CTkFrame(f2, fg_color=FW_CARD, corner_radius=10)
         box.grid(row=0, column=0, sticky="ew", padx=6)
+        box.grid_columnconfigure(1, weight=1)
         result = ctk.CTkLabel(f2, text="", anchor="w", justify="left")
         result.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
-        nxt = nav(f2, 2, next_cmd=lambda: go(2))
+        adv = ctk.CTkFrame(f2, fg_color="transparent")
+        adv.grid(row=2, column=0, sticky="ew", padx=6, pady=(10, 0))
+        nxt = nav(f2, 3, next_cmd=lambda: go(2))
 
         def update_result():
             chosen = set(fixed)
@@ -1400,13 +1527,18 @@ def open_multiflash_window():
                     chosen.add(tok)
                 elif not tok and var.get():
                     chosen.add(var.get())
-            match = sorted((a for a in assets if a["options"] == chosen), key=lambda a: a["ext"] != "uf2")
+            order = [s["id"] for s in fw_sources()]
+            match = sorted((a for a in assets if a["options"] == chosen),
+                           key=lambda a: (a["ext"] != "uf2", order.index(a["src"]["id"]) if a["src"]["id"] in order else 99))
             st["asset"] = match[0] if match else None
             if match:
-                result.configure(text=f"✅  {match[0]['name']}", text_color=("green", "lime"))
+                a = match[0]
+                result.configure(text=f"✅  {a['name']}\n      Quelle: {a['src']['owner']} / {a['src']['name']} · {a['tag']}",
+                                 text_color=("green", "lime"))
                 nxt.configure(state="normal")
             else:
-                result.configure(text="❌  Diese Kombination gibt es in dieser Version nicht.", text_color="red")
+                tip = "" if st["source"]["id"] == "all" else "\n      Tipp: Unter „Alle Quellen“ gibt es mehr Kombinationen."
+                result.configure(text="❌  Diese Kombination gibt es in dieser Version nicht." + tip, text_color="red")
                 nxt.configure(state="disabled")
 
         r = 0
@@ -1414,27 +1546,159 @@ def open_multiflash_window():
             present = [t for t in toks if any(t in s for s in sets)]
             has_none = any(not (s & set(toks)) for s in sets)
             choices = present + ([None] if has_none else [])
-            if len(choices) < 2:
+            if len(choices) < 2 and not (key == "bus" and present):
                 continue
             current = next((t for t in base if t in toks), None)
-            ctk.CTkLabel(box, text=label, anchor="w").grid(row=r, column=0, sticky="w", padx=12, pady=6)
+            names = FW_CHOICE_LABELS.get(key, {})
+            ctk.CTkLabel(box, text=label, anchor="w", font=ctk.CTkFont(weight="bold")).grid(
+                row=r, column=0, sticky="nw", padx=12, pady=(10, 0))
             if len(toks) == 1:
                 var = tk.BooleanVar(value=current is not None)
-                ctk.CTkCheckBox(box, text="", variable=var, command=update_result).grid(row=r, column=1, sticky="w")
+                ctk.CTkCheckBox(box, text="An", variable=var, command=update_result).grid(
+                    row=r, column=1, sticky="w", pady=(10, 0))
                 choice_vars[key] = (var, toks[0])
             else:
                 var = tk.StringVar(value=current or "")
                 fr = ctk.CTkFrame(box, fg_color="transparent")
-                fr.grid(row=r, column=1, sticky="w")
-                for t in choices:
-                    ctk.CTkRadioButton(fr, text=t or "keins", variable=var, value=t or "",
-                                       command=update_result).pack(side="left", padx=(0, 12))
+                fr.grid(row=r, column=1, sticky="w", pady=(10, 0))
+                # Beim Sensor-Anschluss auch zeigen, was diese Quelle nicht hat, damit die Wahl sichtbar bleibt
+                shown = choices + ([t for t in toks if t not in present and t != "smSPI"] if key == "bus" else [])
+                for t in shown:
+                    available = t in choices
+                    text = names.get(t, t or "Platinen-Standard") + ("" if available else " – nicht in dieser Quelle")
+                    ctk.CTkRadioButton(fr, text=text, variable=var, value=t or "", command=update_result,
+                                       state="normal" if available else "disabled").pack(side="left", padx=(0, 14))
                 choice_vars[key] = (var, None)
-            r += 1
+            ctk.CTkLabel(box, text=FW_OPTION_HELP.get(key, ""), anchor="w", justify="left", wraplength=640,
+                         text_color=FW_DIM).grid(row=r + 1, column=0, columnspan=2, sticky="w", padx=12, pady=(2, 4))
+            r += 2
         if r == 0:
             ctk.CTkLabel(box, text="Für dieses Board gibt es nur eine Bauweise.", text_color=FW_DIM).grid(
                 row=0, column=0, sticky="w", padx=12, pady=10)
         update_result()
+        build_settings(adv)
+
+    # Laufzeit-Einstellungen: "Standard" = nichts schreiben. Werte stehen in
+    # der Anzeige-Einheit (s, min, h); beim Schreiben wird umgerechnet.
+    setting_widgets = {}
+
+    def build_settings(parent):
+        setting_widgets.clear()
+        saved = settings.get("fw_settings", {})
+        parent.grid_columnconfigure(0, weight=1)
+        holder = ctk.CTkFrame(parent, fg_color=FW_CARD, corner_radius=10)
+        toggle = ctk.CTkButton(parent, text="▸ Firmware-Einstellungen (optional)", anchor="w", fg_color="transparent",
+                               hover_color=FW_CARD2, font=ctk.CTkFont(weight="bold"))
+        toggle.grid(row=0, column=0, sticky="ew")
+        ctk.CTkLabel(parent, text="Werden nach dem Flashen in jeden Tracker geschrieben. „Standard“ lässt den Wert "
+                                  "unverändert. Geht nur mit Firmware, die Einstellungen kennt (offizielle Firmware).",
+                     text_color=FW_DIM, anchor="w", justify="left", wraplength=700).grid(row=1, column=0, sticky="w", padx=4)
+
+        def flip():
+            if holder.winfo_ismapped():
+                holder.grid_forget()
+                toggle.configure(text="▸ Firmware-Einstellungen (optional)")
+            else:
+                holder.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+                toggle.configure(text="▾ Firmware-Einstellungen (optional)")
+        toggle.configure(command=flip)
+        if saved:
+            flip()
+
+        reset_var = tk.BooleanVar(value=bool(settings.get("fw_settings_reset", False)))
+        ctk.CTkCheckBox(holder, text="Vorher alle Einstellungen im Tracker auf Standard zurücksetzen",
+                        variable=reset_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 4))
+        setting_widgets["__reset__"] = reset_var
+        row = 1
+        for group, items in FW_SETTINGS:
+            ctk.CTkLabel(holder, text=group, font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
+                row=row, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 2))
+            row += 1
+            for name, label, kind, default, unit, factor, help_text in items:
+                ctk.CTkLabel(holder, text=label, anchor="w").grid(row=row, column=0, sticky="w", padx=(24, 8), pady=(4, 0))
+                cell = ctk.CTkFrame(holder, fg_color="transparent")
+                cell.grid(row=row, column=1, sticky="w", pady=(4, 0))
+                if kind == "bool":
+                    std = "Standard"
+                    w = ctk.CTkSegmentedButton(cell, values=[std, "An", "Aus"])
+                    w.set({True: "An", False: "Aus"}.get(saved.get(name), std))
+                    w.pack(side="left")
+                elif kind == "enum":
+                    std = "Standard"
+                    w = ctk.CTkSegmentedButton(cell, values=[std] + list(factor.values()))
+                    w.set(factor.get(saved.get(name), std))
+                    w.pack(side="left")
+                elif kind == "int":
+                    w = ctk.CTkEntry(cell, width=90, placeholder_text=f"{default}")
+                    if name in saved:
+                        w.insert(0, str(saved[name]))
+                    w.pack(side="left")
+                    ctk.CTkLabel(cell, text=f"{unit}   (leer = Standard, meist {default} {unit})", text_color=FW_DIM).pack(side="left", padx=6)
+                else:  # color
+                    w = {"rgb": saved.get(name)}
+                    swatch = ctk.CTkButton(cell, text="Farbe wählen…", width=130)
+
+                    def pick(w=w, swatch=swatch):
+                        from tkinter import colorchooser
+                        c = colorchooser.askcolor(parent=win, title="LED-Farbe")
+                        if c and c[0]:
+                            w["rgb"] = [int(v) for v in c[0]]
+                            swatch.configure(fg_color=c[1], text=c[1])
+
+                    def clear(w=w, swatch=swatch):
+                        w["rgb"] = None
+                        swatch.configure(fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"], text="Farbe wählen…")
+                    swatch.configure(command=pick)
+                    swatch.pack(side="left")
+                    ctk.CTkButton(cell, text="Standard", width=80, fg_color="transparent", border_width=1,
+                                  border_color=FW_SLATE, command=clear).pack(side="left", padx=6)
+                    if w["rgb"]:
+                        hexc = "#%02x%02x%02x" % tuple(w["rgb"])
+                        swatch.configure(fg_color=hexc, text=hexc)
+                setting_widgets[name] = (kind, w, factor)
+                ctk.CTkLabel(holder, text=help_text, text_color=FW_DIM, anchor="w", justify="left", wraplength=640).grid(
+                    row=row + 1, column=0, columnspan=3, sticky="w", padx=(24, 12))
+                row += 2
+        ctk.CTkLabel(holder, text="").grid(row=row, column=0, pady=2)
+
+    # -> (Befehle, Fehlertext). Speichert die Auswahl fuer das naechste Mal.
+    def collect_settings():
+        if not setting_widgets:
+            return [], None
+        values, cmds = {}, []
+        reset = setting_widgets["__reset__"].get()
+        if reset:
+            cmds.append("reset_config all")
+        for name, (kind, w, factor) in setting_widgets.items():
+            if name == "__reset__":
+                continue
+            if kind == "bool":
+                v = w.get()
+                if v in ("An", "Aus"):
+                    values[name] = v == "An"
+                    cmds.append(f"write_config {name} {1 if v == 'An' else 0}")
+            elif kind == "enum":
+                inv = {label: key for key, label in factor.items()}
+                if w.get() in inv:
+                    values[name] = inv[w.get()]
+                    cmds.append(f"write_config {name} {inv[w.get()]}")
+            elif kind == "int":
+                text = w.get().strip().replace(",", ".")
+                if text:
+                    try:
+                        num = float(text)
+                    except ValueError:
+                        return None, f"„{text}“ ist keine Zahl."
+                    values[name] = int(num) if num.is_integer() else num
+                    cmds.append(f"write_config {name} {int(round(num * factor))}")
+            elif kind == "color" and w["rgb"]:
+                values[name] = w["rgb"]
+                for ch, v in zip("rgb", w["rgb"]):
+                    cmds.append(f"write_config led_default_color_{ch} {round(v * 10000 / 255)}")
+        settings["fw_settings"] = values
+        settings["fw_settings_reset"] = reset
+        save_settings()
+        return cmds, None
 
     # ---------- 3: Geraete waehlen ----------
     f3 = make_step(2, "Geräte auswählen", "Welche angesteckten Geräte die Firmware bekommen")
@@ -1588,11 +1852,13 @@ def open_multiflash_window():
         for w in f5.winfo_children():
             w.destroy()
         targets = valid_targets()
-        src = st["source"]
-        version = "eigene Datei" if src["repo"] is None else st["release"]["tag"]
+        src = st["asset"].get("src") or st["source"]
+        version = st["asset"].get("tag") or "eigene Datei"
+        cmds, _ = collect_settings()
+        extra = f"\nEinstellungen:  {len(cmds or [])} Befehl(e) nach dem Flashen" if cmds else ""
         box = ctk.CTkFrame(f5, fg_color=FW_CARD, corner_radius=10)
         box.grid(row=0, column=0, sticky="ew", padx=6)
-        ctk.CTkLabel(box, text=f"Firmware:  {st['asset']['name']}\nQuelle:  {src['owner']} / {src['name']}  ·  {version}",
+        ctk.CTkLabel(box, text=f"Firmware:  {st['asset']['name']}\nQuelle:  {src['owner']} / {src['name']}  ·  {version}{extra}",
                      anchor="w", justify="left").pack(anchor="w", padx=12, pady=(10, 6))
         for r in targets:
             r["status2"] = ctk.CTkLabel(box, text=f"{device_name(r['dev'])}: bereit", anchor="w")
@@ -1620,13 +1886,44 @@ def open_multiflash_window():
     def flash_start(targets):
         if st["busy"] or not targets:
             return
+        cmds, err = collect_settings()
+        if err:
+            flash_ctl["info"].configure(text=f"Einstellungen: {err}", text_color="red")
+            return
         remember_choice()
         st["busy"] = True
         for b in (flash_ctl["start"], flash_ctl["back"], b_add, b_all, b_conn):
             b.configure(state="disabled")
-        threading.Thread(target=flash_worker, args=(targets, dict(st["asset"]), clear_var.get()), daemon=True).start()
+        threading.Thread(target=flash_worker, args=(targets, dict(st["asset"]), clear_var.get(), cmds), daemon=True).start()
 
-    def flash_worker(targets, asset, clear):
+    # Schreibt die Einstellungen und zaehlt die Bestaetigungen ("Updated config")
+    def apply_settings(r, cmds):
+        dev = r["dev"]
+        deadline = time.time() + 15
+        while not dev.connected and time.time() < deadline:
+            time.sleep(0.5)
+        if not dev.connected:
+            ui(lambda: set_status(r, "fertig ✅, Einstellungen nicht übertragen (nicht verbunden)", "orange"))
+            return
+        replies = []
+        dev.listeners.append(replies.append)
+        try:
+            for cmd in cmds:
+                ui(lambda c=cmd: send_command(c, dev))
+                time.sleep(0.2)
+            time.sleep(2)
+        finally:
+            dev.listeners.remove(replies.append)
+        ok = sum(1 for line in replies if "Updated config" in line)
+        writes = sum(1 for c in cmds if c.startswith("write_config"))
+        if any("Unknown command" in line for line in replies):
+            ui(lambda: set_status(r, "fertig ✅, Firmware kennt keine Einstellungen", "orange"))
+        elif ok >= writes:
+            ui(lambda: set_status(r, f"fertig ✅, {writes} Einstellung(en) übernommen", "green"))
+        else:
+            ui(lambda: set_status(r, f"fertig ✅, nur {ok} von {writes} Einstellungen bestätigt", "orange"))
+
+    def flash_worker(targets, asset, clear, cmds):
         info = flash_ctl["info"]
         try:
             fw_path = asset.get("path")
@@ -1707,6 +2004,17 @@ def open_multiflash_window():
                 time.sleep(1)
             for r in waiting.values():
                 ui(lambda rr=r: set_status(rr, "geschrieben, aber nicht zurückgemeldet", "orange"))
+
+            if cmds:
+                done_rows = [r for loc, r in pending.items() if loc in found and loc not in waiting]
+                for r in done_rows:
+                    r["dev"].paused = False  # damit watch_devices sie wieder verbindet
+                ui(lambda: info.configure(text="Übertrage Einstellungen…"))
+                workers = [threading.Thread(target=apply_settings, args=(r, cmds), daemon=True) for r in done_rows]
+                for t in workers:
+                    t.start()
+                for t in workers:
+                    t.join()
 
             ok = len(found) - len(waiting)
             ui(lambda: info.configure(text=f"{ok} von {len(targets)} fertig.",
@@ -2027,6 +2335,8 @@ def flush_serial_queue():
         dev, line, lost = serial_queue.get()
         if line is not None:
             append_text(line, None, dev)
+            for listener in list(dev.listeners):
+                listener(line)
         else:
             device_lost(dev, lost)
     app.after(50, flush_serial_queue)
