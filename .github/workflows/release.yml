@@ -1,0 +1,82 @@
+# Baut die Einzeldateien fuer Linux und Windows und haengt sie an ein Release.
+# Wird von tools/release.sh gestartet (Release als Entwurf -> bauen -> veroeffentlichen).
+# Vor dem Hochladen startet jede Datei einmal im Selbsttest (Fenster + Firmware-Tool).
+name: Release bauen
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release-Tag, z.B. v1.0.1"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-22.04          # alte glibc, laeuft damit auf allen aktuellen Distributionen
+            asset: SmolSlimeConfigurator-Linux
+          - os: windows-latest
+            asset: SmolSlimeConfigurator-Windows.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Abhaengigkeiten
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller customtkinter pyserial requests
+          if [ "$RUNNER_OS" = "Windows" ]; then pip install pywin32; fi
+          if [ "$RUNNER_OS" = "Linux" ]; then sudo apt-get update -qq && sudo apt-get install -y -qq xvfb; fi
+
+      - name: Bauen
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            pyinstaller --onefile --windowed --icon=icon.ico --add-data "icon.ico;." --add-data "icon.png;." \
+              --name SmolSlimeConfigurator-Windows SmolSlimeConfiguratorV9.py
+          else
+            pyinstaller --onefile --windowed --add-data "icon.png:." --add-binary "bin/nrfutil:." \
+              --name SmolSlimeConfigurator-Linux SmolSlimeConfiguratorV9.py
+          fi
+          ls -l dist
+
+      - name: Selbsttest (Linux)
+        if: runner.os == 'Linux'
+        run: SMOLSLIME_SELFTEST=1 timeout 60 xvfb-run -a dist/${{ matrix.asset }}
+
+      - name: Selbsttest (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:SMOLSLIME_SELFTEST = "1"
+          $p = Start-Process -FilePath "dist\${{ matrix.asset }}" -PassThru
+          if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "Selbsttest: haengt" }
+          if ($p.ExitCode -ne 0) { throw "Selbsttest: Exitcode $($p.ExitCode)" }
+
+      - name: Hochladen
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ inputs.tag }}" "dist/${{ matrix.asset }}" --clobber --repo "${{ github.repository }}"
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Release veroeffentlichen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ inputs.tag }}" --draft=false --latest --repo "${{ github.repository }}"

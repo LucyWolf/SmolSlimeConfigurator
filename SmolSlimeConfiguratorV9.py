@@ -35,9 +35,9 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
-UPDATE_ASSET = "SmolSlimeConfigurator-Linux"
+UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
 # OS temp dir
 def get_settings_path():
@@ -212,7 +212,20 @@ def fetch_latest_firmware_assets():
 
 
 # Start base window, size & name
-app = ctk.CTk()
+try:
+    # className = WM_CLASS; KDE/GNOME ordnen das Fenster damit dem Menueeintrag (Icon) zu
+    app = ctk.CTk(className="smolslime-configurator")
+except tk.TclError:
+    if sys.platform.startswith("linux") and os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
+        msg = ("SmolSlime Configurator braucht XWayland (die X11-Ebene von Wayland).\n"
+               "Bitte XWayland installieren bzw. in der Sitzung aktivieren.")
+        print(msg, file=sys.stderr)
+        for cmd in (["kdialog", "--error", msg], ["zenity", "--error", f"--text={msg}"], ["notify-send", msg]):
+            if shutil.which(cmd[0]):
+                subprocess.run(cmd)
+                break
+        sys.exit(1)
+    raise
 app.title(f"SmolSlime Configurator v{APP_VERSION}")
 app.geometry("1080x640")
 
@@ -332,6 +345,7 @@ class Device:
         self.serial_number = info.serial_number or ""
         self.location = (info.location or "").split(":")[0]
         self.product = info.product or info.description or ""
+        self.usb_id = (info.vid, info.pid)
         self.ser = None
         self.stop = threading.Event()
         self.paused = False      # waehrend des Flashens nicht neu verbinden
@@ -352,7 +366,7 @@ class Device:
 
     @property
     def is_receiver(self):
-        return self.is_dongle or "receiver" in self.product.lower()
+        return self.is_dongle or "receiver" in self.product.lower() or self.usb_id == SLIMENRF_RECEIVER_ID
 
     @property
     def connected(self):
@@ -1057,6 +1071,8 @@ def download_firmware():
 # jedes kopieren -> pruefen, ob der Tracker danach wieder als Port auftaucht.
 # Tracker und Laufwerk gehoeren ueber den USB-Steckplatz (z.B. "1-5.2")
 # zusammen; der bleibt beim Wechsel in den Bootloader gleich.
+SLIMENRF_RECEIVER_ID = (0x1209, 0x7690)   # USB-Kennung des SlimeNRF-Empfaengers
+
 def list_tracker_ports():
     found = []
     for p in serial.tools.list_ports.comports():
@@ -1068,7 +1084,7 @@ def list_tracker_ports():
             "name": name,
             "location": (p.location or "").split(":")[0],
             "serial": p.serial_number or "",
-            "receiver": "receiver" in name.lower()
+            "receiver": "receiver" in name.lower() or (p.vid, p.pid) == SLIMENRF_RECEIVER_ID
                         or (bool(p.serial_number) and p.serial_number == settings.get("dongle_serial")),
         })
     return found
@@ -1119,6 +1135,28 @@ def mount_drive(drive):
         if mount:
             return mount
     return None
+
+# Wurzelpfade aller UF2-Bootloader-Laufwerke. Linux haengt neue kleine
+# USB-Datentraeger dafuer ein, Windows prueft nur vorhandene Laufwerksbuchstaben.
+def uf2_drive_roots():
+    if sys.platform.startswith("win"):
+        import ctypes
+        import string
+        ctypes.windll.kernel32.SetErrorMode(1)  # kein "Kein Datentraeger"-Fenster bei leeren Kartenlesern
+        mask = ctypes.windll.kernel32.GetLogicalDrives()
+        roots = [f"{c}:\\" for i, c in enumerate(string.ascii_uppercase) if mask & (1 << i)]
+    elif sys.platform == "darwin":
+        roots = [os.path.join("/Volumes", d) for d in os.listdir("/Volumes")]
+    else:
+        roots = [m for m in (mount_drive(d) for d in find_usb_drives().values()) if m]
+    found = []
+    for root in roots:
+        try:
+            if os.path.isfile(os.path.join(root, "INFO_UF2.TXT")):
+                found.append(root)
+        except OSError:
+            pass
+    return found
 
 multi_win = None
 
@@ -1335,9 +1373,6 @@ def guess_board(product, boards):
 
 def open_multiflash_window():
     global multi_win
-    if not sys.platform.startswith("linux"):
-        append_text("Das DIY Firmware-Tool gibt es nur unter Linux.\n", "error")
-        return
     if multi_win is not None and multi_win.winfo_exists():
         multi_win.focus()
         return
@@ -2035,11 +2070,9 @@ def open_multiflash_window():
                 with open(fw_path, "wb") as f:
                     shutil.copyfileobj(response.raw, f)
 
-            before = set(find_usb_drives())
-            for r in targets:
+            def enter_bootloader(r):
                 dev = r["dev"]
                 dev.paused = True
-                r["location"] = dev.location
                 try:
                     with ser_lock:
                         if clear and not dev.is_receiver:  # beim Dongle wuerde clear alle Kopplungen loeschen
@@ -2047,25 +2080,12 @@ def open_multiflash_window():
                             time.sleep(0.5)
                         dev.ser.write(b"dfu\n")
                         dev.ser.flush()
-                    ui(lambda rr=r: set_status(rr, "Bootloader…"))
+                    ui(lambda: set_status(r, "Bootloader…"))
                 except Exception as e:
-                    ui(lambda rr=r, e=e: set_status(rr, f"dfu fehlgeschlagen: {e}", "red"))
+                    ui(lambda e=e: set_status(r, f"dfu fehlgeschlagen: {e}", "red"))
                 disconnect_device(dev)
                 ui(refresh_sidebar)
                 ui(sync_active)
-
-            ui(lambda: info.configure(text="Warte auf die UF2-Laufwerke…"))
-            pending = {r["location"]: r for r in targets if r["location"]}
-            found = {}
-            deadline = time.time() + 30
-            while time.time() < deadline and len(found) < len(pending):
-                for name, d in find_usb_drives().items():
-                    if name in before or d["location"] in found or d["location"] not in pending:
-                        continue
-                    mount = mount_drive(d)
-                    if mount and os.path.isfile(os.path.join(mount, "INFO_UF2.TXT")):
-                        found[d["location"]] = mount
-                time.sleep(1)
 
             def copy_one(r, mount):
                 try:
@@ -2078,35 +2098,75 @@ def open_multiflash_window():
                     pass  # Der Bootloader startet oft schon waehrend des Schliessens neu
                 ui(lambda: set_status(r, "geschrieben, startet neu…"))
 
-            ui(lambda: info.configure(text="Schreibe Firmware…"))
-            copies = []
-            for loc, r in pending.items():
-                if loc in found:
-                    t = threading.Thread(target=copy_one, args=(r, found[loc]), daemon=True)
-                    t.start()
-                    copies.append(t)
-                else:
-                    ui(lambda rr=r: set_status(rr, "kein UF2-Laufwerk gefunden", "red"))
-            for r in targets:
-                if not r["location"]:
-                    ui(lambda rr=r: set_status(rr, "USB-Steckplatz unbekannt", "red"))
-            for t in copies:
-                t.join()
+            # Schluessel je Geraet: Seriennummer (gibt es auch unter Windows), sonst Steckplatz
+            keys = {id(r): r["dev"].serial_number or r["dev"].location or f"#{i}" for i, r in enumerate(targets)}
+            found = {}
+
+            if sys.platform.startswith("linux") and all(r["dev"].location for r in targets):
+                # Linux: alle gleichzeitig, Laufwerk und Tracker ueber den USB-Steckplatz zuordnen
+                before = set(find_usb_drives())
+                for r in targets:
+                    enter_bootloader(r)
+                ui(lambda: info.configure(text="Warte auf die UF2-Laufwerke…"))
+                by_loc = {r["dev"].location: r for r in targets}
+                mounts = {}
+                deadline = time.time() + 30
+                while time.time() < deadline and len(mounts) < len(by_loc):
+                    for name, d in find_usb_drives().items():
+                        if name in before or d["location"] in mounts or d["location"] not in by_loc:
+                            continue
+                        mount = mount_drive(d)
+                        if mount and os.path.isfile(os.path.join(mount, "INFO_UF2.TXT")):
+                            mounts[d["location"]] = mount
+                    time.sleep(1)
+                ui(lambda: info.configure(text="Schreibe Firmware…"))
+                copies = []
+                for loc, r in by_loc.items():
+                    if loc in mounts:
+                        found[keys[id(r)]] = r
+                        t = threading.Thread(target=copy_one, args=(r, mounts[loc]), daemon=True)
+                        t.start()
+                        copies.append(t)
+                    else:
+                        ui(lambda rr=r: set_status(rr, "kein UF2-Laufwerk gefunden", "red"))
+                for t in copies:
+                    t.join()
+            else:
+                # Windows/macOS (oder Steckplatz unbekannt): einer nach dem anderen,
+                # das jeweils neu auftauchende UF2-Laufwerk gehoert zum gerade gestarteten Tracker
+                for n, r in enumerate(targets, 1):
+                    ui(lambda n=n: info.configure(text=f"Tracker {n} von {len(targets)}…"))
+                    before = set(uf2_drive_roots())
+                    enter_bootloader(r)
+                    root, deadline = None, time.time() + 30
+                    while root is None and time.time() < deadline:
+                        root = next((d for d in uf2_drive_roots() if d not in before), None)
+                        time.sleep(0.5)
+                    if root is None:
+                        ui(lambda rr=r: set_status(rr, "kein UF2-Laufwerk gefunden", "red"))
+                        continue
+                    found[keys[id(r)]] = r
+                    copy_one(r, root)
+                    # warten, bis das Laufwerk weg ist, sonst haelt der naechste Tracker es fuer seins
+                    deadline = time.time() + 15
+                    while root in uf2_drive_roots() and time.time() < deadline:
+                        time.sleep(0.5)
 
             # Erfolg = das Geraet meldet sich mit neuer Firmware wieder als Port
-            waiting = {loc: r for loc, r in pending.items() if loc in found}
+            waiting = dict(found)
             deadline = time.time() + 30
             while waiting and time.time() < deadline:
-                for p in list_tracker_ports():
-                    r = waiting.pop(p["location"], None)
-                    if r:
-                        ui(lambda rr=r: set_status(rr, "fertig ✅", "green"))
+                for p in serial.tools.list_ports.comports():
+                    for key in (p.serial_number, (p.location or "").split(":")[0]):
+                        r = waiting.pop(key, None) if key else None
+                        if r:
+                            ui(lambda rr=r: set_status(rr, "fertig ✅", "green"))
                 time.sleep(1)
             for r in waiting.values():
                 ui(lambda rr=r: set_status(rr, "geschrieben, aber nicht zurückgemeldet", "orange"))
 
             if cmds:
-                done_rows = [r for loc, r in pending.items() if loc in found and loc not in waiting]
+                done_rows = [r for key, r in found.items() if key not in waiting]
                 for r in done_rows:
                     r["dev"].paused = False  # damit watch_devices sie wieder verbindet
                 ui(lambda: info.configure(text="Übertrage Einstellungen…"))
@@ -2372,6 +2432,13 @@ ToolTip(repo_button, "github.com/ICantMakeThings/SmolSlimeConfigurator")
 # sonst nur die Release-Seite geoeffnet.
 update_info = {}
 
+# Reste eines Windows-Updates (die umbenannte alte .exe) wegraeumen
+if getattr(sys, "frozen", False):
+    try:
+        os.remove(sys.executable + ".alt")
+    except OSError:
+        pass
+
 def ver_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
 
@@ -2401,7 +2468,7 @@ def offer_update(tag, asset, notes):
 def install_update():
     from tkinter import messagebox
     tag, asset = update_info.get("tag"), update_info.get("asset")
-    if not (getattr(sys, "frozen", False) and sys.platform.startswith("linux") and asset):
+    if not (getattr(sys, "frozen", False) and sys.platform.startswith(("linux", "win")) and asset):
         webbrowser.open(f"https://github.com/{UPDATE_REPO}/releases/latest")
         return
     notes = update_info.get("notes", "").strip()
@@ -2421,7 +2488,13 @@ def install_update():
             if os.path.getsize(new) != asset.get("size", os.path.getsize(new)):
                 raise RuntimeError("Download unvollständig")
             os.chmod(new, 0o755)
-            os.replace(new, exe)  # Linux erlaubt das Ersetzen der laufenden Datei
+            if sys.platform.startswith("win"):
+                # Windows sperrt die laufende .exe gegen Ueberschreiben, Umbenennen geht aber
+                old = exe + ".alt"
+                if os.path.exists(old):
+                    os.remove(old)
+                os.rename(exe, old)
+            os.replace(new, exe)  # Linux erlaubt das Ersetzen der laufenden Datei direkt
         except Exception as e:
             app.after(0, lambda e=e: (append_text(f"Update fehlgeschlagen: {e}\n", "error"),
                                       btn_update.configure(state="normal", text=f"⬆ Update {tag}")))
@@ -2507,7 +2580,10 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 if sys.platform.startswith("win"):
-    app.iconbitmap(resource_path("icon.ico"))
+    try:
+        app.iconbitmap(resource_path("icon.ico"))
+    except Exception as e:
+        print(f"boohoo.. error: {e}")
 elif sys.platform.startswith("linux") or sys.platform.startswith("darwin"):
     img_path = resource_path("icon.png")
     try:
@@ -2531,5 +2607,9 @@ def flush_serial_queue():
 
 app.after(50, flush_serial_queue)
 app.after(500, watch_devices)
+
+if os.environ.get("SMOLSLIME_SELFTEST"):
+    app.after(2000, open_multiflash_window)
+    app.after(6000, lambda: (print("selftest ok", flush=True), os._exit(0)))
 # The MOST PORTAN' PART!!!
 app.mainloop()

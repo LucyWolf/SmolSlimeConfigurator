@@ -3,12 +3,13 @@
 # Per Doppelklick ausfuehrbar. Kopiert das Programm nach ~/.local/share,
 # legt einen Menueeintrag an und gibt dem angemeldeten Benutzer Zugriff auf
 # die seriellen SlimeNRF-Geraete (sonst: "Permission denied: /dev/ttyACM0").
-# Erneut ausfuehren = Update auf die neueste ...-Linux-Datei im selben Ordner.
+# Ist er schon installiert, fragt das Skript: aktualisieren oder deinstallieren.
 set -euo pipefail
 
 TITLE="SmolSlime Configurator"
 INSTALL_DIR="$HOME/.local/share/smolslime-configurator"
 DESKTOP_DIR="$HOME/.local/share/applications"
+ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
 RULE_FILE="/etc/udev/rules.d/70-smolslime.rules"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -35,7 +36,44 @@ fail() {
     exit 1
 }
 
-# Neueste Programmdatei neben dem Installer (V9, spaeter V10 …)
+as_root() {
+    if [ "$GUI" != "0" ] && command -v pkexec >/dev/null 2>&1; then
+        pkexec /bin/sh -c "$1"
+    else
+        sudo /bin/sh -c "$1"
+    fi
+}
+
+uninstall() {
+    rm -rf "$INSTALL_DIR"
+    rm -f "$DESKTOP_DIR/smolslime-configurator.desktop" "$ICON_DIR/smolslime-configurator.png"
+    if [ -f "$RULE_FILE" ]; then
+        as_root "rm -f '$RULE_FILE' && udevadm control --reload" || true
+    fi
+    info "SmolSlime Configurator wurde entfernt.\n\nDeine Einstellungen unter ~/.config/smolslime bleiben erhalten."
+    exit 0
+}
+
+# Schon installiert? Dann aktualisieren oder deinstallieren
+if [ -x "$INSTALL_DIR/SmolSlimeConfigurator" ]; then
+    Q="SmolSlime Configurator ist schon installiert."
+    case "$GUI" in
+        1) set +e; kdialog --title "$TITLE" --yesnocancel "$Q" --yes-label "Aktualisieren" --no-label "Deinstallieren"
+           CHOICE=$?; set -e ;;
+        2) set +e; OUT=$(zenity --question --title="$TITLE" --text="$Q" --ok-label="Aktualisieren" \
+                --cancel-label="Abbrechen" --extra-button="Deinstallieren"); RC=$?; set -e
+           if [ "$OUT" = "Deinstallieren" ]; then CHOICE=1; elif [ "$RC" = 0 ]; then CHOICE=0; else CHOICE=2; fi ;;
+        *) read -rp "$Q [a]ktualisieren, [d]einstallieren, [x] abbrechen: " A
+           case "$A" in a|A) CHOICE=0 ;; d|D) CHOICE=1 ;; *) CHOICE=2 ;; esac ;;
+    esac
+    case "$CHOICE" in
+        0) ;;
+        1) uninstall ;;
+        *) exit 0 ;;
+    esac
+fi
+
+# Neueste Programmdatei neben dem Installer
 BIN_SRC="$(ls -t "$SCRIPT_DIR"/SmolSlimeConfigurator*-Linux 2>/dev/null | head -1 || true)"
 [ -n "$BIN_SRC" ] || fail "Keine Datei SmolSlimeConfigurator…-Linux in\n$SCRIPT_DIR gefunden."
 
@@ -66,8 +104,15 @@ mkdir -p "$INSTALL_DIR"
 cp -f "$BIN_SRC" "$INSTALL_DIR/SmolSlimeConfigurator"
 chmod +x "$INSTALL_DIR/SmolSlimeConfigurator"
 
-# 2) Menueeintrag
+# 2) Menueeintrag. StartupWMClass = Fensterklasse der App, damit KDE/GNOME
+#    (auch unter Wayland) das Fenster dem Eintrag und seinem Icon zuordnen.
 mkdir -p "$DESKTOP_DIR"
+ICON=input-gaming
+if [ -f "$SCRIPT_DIR/icon.png" ]; then
+    mkdir -p "$ICON_DIR"
+    cp -f "$SCRIPT_DIR/icon.png" "$ICON_DIR/smolslime-configurator.png"
+    ICON=smolslime-configurator
+fi
 cat > "$DESKTOP_DIR/smolslime-configurator.desktop" << DESKTOP
 [Desktop Entry]
 Type=Application
@@ -75,7 +120,8 @@ Name=SmolSlime Configurator
 Comment=SlimeNRF-Tracker und Empfaenger einstellen
 Exec=$INSTALL_DIR/SmolSlimeConfigurator
 Path=$INSTALL_DIR
-Icon=input-gaming
+Icon=$ICON
+StartupWMClass=smolslime-configurator
 Terminal=false
 Categories=Utility;
 DESKTOP
@@ -101,11 +147,7 @@ udevadm control --reload
 udevadm trigger --subsystem-match=tty --subsystem-match=hidraw
 ${SERIAL_GROUP:+usermod -aG $SERIAL_GROUP '$USER'}
 "
-    if [ "$GUI" != "0" ] && command -v pkexec >/dev/null 2>&1; then
-        pkexec /bin/sh -c "$ROOT_CMD" || fail "Rechte wurden nicht vergeben (Passwort abgebrochen?).\nDas Programm ist installiert, findet den Empfaenger aber nicht."
-    else
-        sudo /bin/sh -c "$ROOT_CMD"
-    fi
+    as_root "$ROOT_CMD" || fail "Rechte wurden nicht vergeben (Passwort abgebrochen?).\nDas Programm ist installiert, findet den Empfaenger aber nicht."
 fi
 
 MSG="Installation abgeschlossen!\n\nStart ueber das Anwendungsmenue: SmolSlime Configurator\n\nFalls der Empfaenger schon steckt: einmal ab- und wieder einstecken."
