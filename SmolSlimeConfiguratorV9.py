@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.22"
+APP_VERSION = "1.0.23"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1340,6 +1340,28 @@ FW_DIM = ("gray35", "gray65")
 fw_release_cache = {}
 
 # Erklaerungen stehen hinter einem ?-Knopf, damit die Seite uebersichtlich bleibt
+# Farb-LED (RGB) laut Board-Dateien der offiziellen Firmware: nur Boards mit pwm-led1 und pwm-led2 nutzen
+# die LED-Farbe. True/False, None = Board nicht in der offiziellen Firmware, also ungeprueft.
+def board_has_rgb(board, options=()):
+    if board == "ProMicro":
+        return "Chrysalis" in options          # Stacked Smol und Normal: nur die einfarbige LED (P0.15)
+    if board in ("Mochi", "XIAO", "XIAO_Sense", "SlimevrMini4", "SlimevrMini4R9", "SlimevrMini4R11"):
+        return True
+    if board in ("SlimevrMini", "SlimevrMini2", "SlimevrMini3_R6", "SlimevrMini3_R7", "R3"):
+        return False
+    return None
+
+# dasselbe ueber die Zeile "Target: ..." aus der Antwort auf info
+def target_has_rgb(target):
+    t = target.lower()
+    if any(k in t for k in ("chrysalis", "mochi", "xiao", "slimevrmini_p4")):
+        return True
+    if any(k in t for k in ("promicro", "slimevrmini_p", "slimenrf_r")):
+        return False
+    return None
+
+LED_UNKNOWN_NOTE = "ob dieses Board eine Farb-LED hat, ist nicht geprüft"
+
 # Bilder zu den Bauformen (assets/bauform/<datei>), werden unter dem "?" mit angezeigt
 FW_VARIANT_IMAGES = [("Stacked Smol", "stacked.png"), ("Chrysalis", "chrysalis.png"), ("Normal (Non-Stacked)", "normal.png")]
 
@@ -1909,6 +1931,7 @@ def open_multiflash_window():
                 tip = "" if st["source"]["id"] == "all" else "\n      Tipp: Unter „Alle Quellen“ gibt es mehr Kombinationen."
                 result.configure(text="❌  Diese Kombination gibt es in dieser Version nicht." + tip, text_color="red")
                 nxt.configure(state="disabled")
+            apply_led_visibility()
             # Bei fehlender Kombination die naechstliegenden vorhandenen Dateien anbieten
             for w in suggest.winfo_children():
                 w.destroy()
@@ -1976,6 +1999,18 @@ def open_multiflash_window():
     # Laufzeit-Einstellungen: "Standard" = nichts schreiben. Werte stehen in
     # der Anzeige-Einheit (s, min, h); beim Schreiben wird umgerechnet.
     setting_widgets = {}
+    led_ui = {}   # Gruppenueberschrift, Zeile und Hinweis der LED-Farbe
+
+    def led_state():
+        return board_has_rgb(st["board"], st["asset"]["options"] if st.get("asset") else ())
+
+    def apply_led_visibility():
+        if not led_ui:
+            return
+        state = led_state()
+        for key in ("group", "head", "cell"):
+            led_ui[key].grid() if state is not False else led_ui[key].grid_remove()
+        led_ui["note"].configure(text="" if state else LED_UNKNOWN_NOTE)
 
     def build_settings(parent):
         setting_widgets.clear()
@@ -2005,13 +2040,14 @@ def open_multiflash_window():
                         variable=reset_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 4))
         setting_widgets["__reset__"] = reset_var
         row = 1
+        led_ui.clear()
         for group, items in FW_SETTINGS:
-            ctk.CTkLabel(holder, text=group, font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
-                row=row, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 2))
+            group_label = ctk.CTkLabel(holder, text=group, font=ctk.CTkFont(size=14, weight="bold"), anchor="w")
+            group_label.grid(row=row, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 2))
             row += 1
             for name, label, kind, default, unit, factor, help_text in items:
-                label_with_help(holder, row, label, help_text, padx=24).grid(
-                    row=row, column=0, sticky="w", padx=(24, 8), pady=(4, 0))
+                head = label_with_help(holder, row, label, help_text, padx=24)
+                head.grid(row=row, column=0, sticky="w", padx=(24, 8), pady=(4, 0))
                 cell = ctk.CTkFrame(holder, fg_color="transparent")
                 cell.grid(row=row, column=1, sticky="w", pady=(4, 0))
                 if kind == "bool":
@@ -2051,9 +2087,13 @@ def open_multiflash_window():
                     if w["rgb"]:
                         hexc = "#%02x%02x%02x" % tuple(w["rgb"])
                         swatch.configure(fg_color=hexc, text=hexc)
+                    note = ctk.CTkLabel(cell, text="", text_color=FW_DIM)
+                    note.pack(side="left", padx=6)
+                    led_ui.update(group=group_label, head=head, cell=cell, note=note)
                 setting_widgets[name] = (kind, w, factor)
                 row += 2
         ctk.CTkLabel(holder, text="").grid(row=row, column=0, pady=2)
+        apply_led_visibility()
 
     # -> (Befehle, Fehlertext). Speichert die Auswahl fuer das naechste Mal.
     def collect_settings():
@@ -2085,7 +2125,7 @@ def open_multiflash_window():
                         return None, f"„{text}“ ist keine Zahl."
                     values[name] = int(num) if num.is_integer() else num
                     cmds.append(f"write_config {name} {int(round(num * factor))}")
-            elif kind == "color" and w["rgb"]:
+            elif kind == "color" and w["rgb"] and led_state() is not False:
                 values[name] = w["rgb"]
                 for ch, v in zip("rgb", w["rgb"]):
                     cmds.append(f"write_config led_default_color_{ch} {round(v * 10000 / 255)}")
@@ -2706,16 +2746,20 @@ def open_device_settings(dev, parent):
 
         def work():
             values = {}
-            for line in query_device(dev, ["read_config all"], wait=2.0):
+            for line in query_device(dev, ["info", "read_config all"], wait=2.0):
                 m = re.match(r"^Read config: (\w+)=(-?\d+)", line)
                 if m:
                     values[m.group(1)] = int(m.group(2))
+                elif line.startswith("Target: "):
+                    current["__target__"] = line[len("Target: "):]
             app.after(0, lambda: build(values, done_msg))
         threading.Thread(target=work, daemon=True).start()
 
     def build(values, done_msg=None):
+        target = current.get("__target__", "")
         current.clear()
         current.update(values)
+        rgb = target_has_rgb(target) if target else None
         widgets.clear()
         if not values:
             status.configure(text="Keine Antwort auf „read_config“ – diese Firmware kennt keine Einstellungen "
@@ -2725,14 +2769,16 @@ def open_device_settings(dev, parent):
         holder.pack(fill="x", padx=6, pady=4)
         row = 0
         for group, items in FW_SETTINGS:
-            if not any(n in values or (k == "color" and "led_default_color_r" in values) for n, _, k, *_ in items):
+            if not any(n in values or (k == "color" and "led_default_color_r" in values and rgb is not False)
+                       for n, _, k, *_ in items):
                 continue  # Gruppe, die diese Firmware nicht kennt, gar nicht erst anzeigen
             ctk.CTkLabel(holder, text=group, font=ctk.CTkFont(size=14, weight="bold"), anchor="w").grid(
                 row=row, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 2))
             row += 1
             for name, label, kind, default, unit, factor, help_text in items:
                 if kind == "color":
-                    if not all(f"led_default_color_{c}" in values for c in "rgb"):
+                    # Farbe nur bei Boards mit Farb-LED (Stacked Smol/Normal haben nur die einfarbige)
+                    if not all(f"led_default_color_{c}" in values for c in "rgb") or rgb is False:
                         continue
                 elif name not in values:
                     continue
@@ -2768,6 +2814,8 @@ def open_device_settings(dev, parent):
                             sw.configure(fg_color=c[1], text=c[1])
                     sw.configure(command=pick)
                     sw.pack(side="left")
+                    if rgb is None:
+                        ctk.CTkLabel(cell, text=LED_UNKNOWN_NOTE, text_color=FW_DIM).pack(side="left", padx=6)
                 widgets[name] = (kind, wdg, factor)
                 row += 2
         ctk.CTkLabel(holder, text="").grid(row=row, column=0, pady=2)

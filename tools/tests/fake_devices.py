@@ -36,7 +36,7 @@ FAKE_DONGLE = fake_device("SlimeNRF Receiver Holyiot-21017", "C7F52BB73A4A4882",
                            "Board: holyiot_21017"])
 FAKE_TRACKER = fake_device("SlimeNRF Tracker ProMicro", "ED722F24DECA30F1",
                            ["SlimeVR SlimeNRF Tracker ProMicro", "SlimeVR-Tracker-nRF 0.7.2+3 (Commit abc1234)",
-                            "Board: promicro_uf2", "IMU: ICM-45686", "Interface: SPI", "Tracker ID: 1",
+                            "Board: promicro_uf2", "Target: promicro_uf2/nrf52840/stackedspi", "IMU: ICM-45686", "Interface: SPI", "Tracker ID: 1",
                             "Battery: 87% (Read 0h 2min ago)"],
                            {"sensor_use_mag": 1, "use_sensor_clock": 1, "use_imu_timeout": 1, "imu_timeout_ramp_min": 5000,
                             "imu_timeout_ramp_max": 15000, "sensor_accel_odr": 100, "active_timeout_mode": 0,
