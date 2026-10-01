@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.23"
+APP_VERSION = "1.0.24"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1211,7 +1211,7 @@ FW_OPTION_GROUPS = [
     ("bus", "Sensor-Anschluss", ["SPI", "I2C"]),
     ("pins", "smSPI-Belegung", ["SmolPins"]),
     ("mag", "Magnetometer", ["Mag"]),
-    ("clk", "Sensor-Takt (CLKIN/INT2)", ["CLK"]),   # an/aus; NoCLK wird beim Einlesen umgerechnet
+    ("clk", "Sensor-Takt (CLK_CTL)", ["CLK"]),   # an/aus; NoCLK wird beim Einlesen umgerechnet
     ("sleep", "Schlafmodus (WOM)", ["Sleep"]),   # an/aus; NoSleep wird beim Einlesen umgerechnet
     ("sw0", "Taster an SW0", ["SW0"]),
     ("tdma", "Funkmodus TDMA", ["TDMA"]),
@@ -1234,10 +1234,10 @@ FW_OPTION_HELP = {
     "mag": "Ein Magnetometer ist ein Kompass-Sensor. Er verhindert, dass sich die Drehung des Trackers mit der Zeit "
            "langsam verschiebt (Drift). Nur einschalten, wenn wirklich einer verbaut ist. In der Nähe von Metall, "
            "Magneten oder Lautsprechern kann er stören.",
-    "clk": "Der Controller gibt über eine eigene Leitung einen Takt (32,768 kHz) an den Sensor. Das macht die "
-           "Zeitmessung genauer und spart etwas Strom. Am ICM-Sensor gehört diese Leitung an CLKIN – das ist "
-           "derselbe Pin wie INT2, nicht INT1 (INT1 ist der normale Interrupt). Am Controller kommt der Takt beim "
-           "ProMicro aus P0.20, beim Stacked Smol aus P1.11. Nur einschalten, wenn die Leitung angeschlossen ist.",
+    "clk": "Leitung, über die der Controller den Takt des Sensors steuert. Im Schaltplan der SlimeVR-Doku heißt "
+           "sie CLK_CTL – beim Stacked Smol Pin 111 (P1.11), beim normalen ProMicro laut Firmware P0.20. Nur "
+           "einschalten, wenn diese Leitung verlötet ist. Nicht verwechseln mit INT: das ist die Interrupt-Leitung, "
+           "die immer verlötet sein muss.",
     "sleep": "An (empfohlen): Liegt der Tracker still, legt er sich schlafen und wacht bei Bewegung von selbst "
              "wieder auf (WOM = Wake on Motion). Das spart viel Akku. Aus: Der Tracker bleibt immer wach und "
              "reagiert sofort, aber der Akku hält deutlich kürzer. Aus nur, wenn dein Sensor das Aufwecken durch "
@@ -1262,8 +1262,8 @@ FW_SETTINGS = [
     ("Sensor", [
         ("sensor_use_mag", "Magnetometer benutzen", "bool", True, "", 1,
          "Schaltet den Kompass-Sensor ein oder aus, falls einer verbaut ist."),
-        ("use_sensor_clock", "Sensor-Takt (CLKIN/INT2) benutzen", "bool", True, "", 1,
-         "Nutzt die Taktleitung zum CLKIN-Pin des Sensors (beim ICM derselbe Pin wie INT2), falls angeschlossen."),
+        ("use_sensor_clock", "Sensor-Takt (CLK_CTL) benutzen", "bool", True, "", 1,
+         "Nutzt die Takt-Leitung CLK_CTL zum Sensor, falls sie verlötet ist."),
         ("sensor_use_6_side_calibration", "6-Seiten-Kalibrierung", "bool", True, "", 1,
          "Genauere Kalibrierung des Beschleunigungssensors. Wird in der Konsole mit „6-side“ durchgeführt."),
         ("sensor_accel_odr", "Messrate Beschleunigung", "int", 100, "Hz", 1,
@@ -1361,6 +1361,10 @@ def target_has_rgb(target):
     return None
 
 LED_UNKNOWN_NOTE = "ob dieses Board eine Farb-LED hat, ist nicht geprüft"
+
+# Im DIY Firmware-Tool legt schon die Bauweise (Schritt 2 oben) Magnetometer und Sensor-Takt fest;
+# unten bei den optionalen Einstellungen waeren sie doppelt. Die Geraeteverwaltung zeigt sie weiter.
+FW_TOOL_SKIP_SETTINGS = {"sensor_use_mag", "use_sensor_clock"}
 
 # Bilder zu den Bauformen (assets/bauform/<datei>), werden unter dem "?" mit angezeigt
 FW_VARIANT_IMAGES = [("Stacked Smol", "stacked.png"), ("Chrysalis", "chrysalis.png"), ("Normal (Non-Stacked)", "normal.png")]
@@ -2046,6 +2050,8 @@ def open_multiflash_window():
             group_label.grid(row=row, column=0, columnspan=3, sticky="w", padx=12, pady=(12, 2))
             row += 1
             for name, label, kind, default, unit, factor, help_text in items:
+                if name in FW_TOOL_SKIP_SETTINGS:
+                    continue
                 head = label_with_help(holder, row, label, help_text, padx=24)
                 head.grid(row=row, column=0, sticky="w", padx=(24, 8), pady=(4, 0))
                 cell = ctk.CTkFrame(holder, fg_color="transparent")
