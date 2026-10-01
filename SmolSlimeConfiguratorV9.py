@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -697,9 +697,6 @@ ctk.CTkLabel(header_text, text=f"Tracker und Dongle verbinden, einstellen und fl
 # Werkzeuge oben rechts; die alte Leiste darunter wird nicht mehr angezeigt
 header_buttons = ctk.CTkFrame(header, fg_color="transparent")
 header_buttons.pack(side="right", anchor="n", pady=(4, 0))
-btn_check_update = ctk.CTkButton(header_buttons, text="Nach Updates suchen", width=170,
-                                 command=lambda: check_for_update(manual=True))
-btn_check_update.pack(side="right", padx=(5, 0))
 
 top_frame = ctk.CTkFrame(app)
 # Die alte Leiste (Anschluss, Connect, Firmware) wird nicht mehr gezeigt: Geraete verbinden sich
@@ -2618,11 +2615,11 @@ ToolTip(btn_download_fw, "Upgrade your firmware!")
 
 btn_multi_fw = ctk.CTkButton(header_buttons, text="DIY Firmware-Tool", width=80, command=open_multiflash_window,
                              fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
-btn_multi_fw.pack(side="left", padx=5, before=btn_check_update)
+btn_multi_fw.pack(side="left", padx=5)
 ToolTip(btn_multi_fw, "Tracker konfigurieren und auf einmal flashen")
 
 btn_devmgr = ctk.CTkButton(header_buttons, text="Geräteverwaltung", width=80, command=open_device_manager)
-btn_devmgr.pack(side="left", padx=5, before=btn_check_update)
+btn_devmgr.pack(side="left", padx=(5, 0))
 ToolTip(btn_devmgr, "Alle Geräte, Akku, Firmware und Einstellungen")
 
 status_label = ctk.CTkLabel(top_frame, text="Not connected", text_color="red")
@@ -2837,15 +2834,12 @@ def ver_tuple(v):
     return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
 
 def show_check_result(text):
-    for b in (btn_check_update, update_button):
-        b.configure(text=text)
-    app.after(4000, lambda: [b.configure(text="Nach Updates suchen", state="normal")
-                             for b in (btn_check_update, update_button)])
+    update_button.configure(text=text)
+    app.after(4000, lambda: update_button.configure(text="Nach Updates suchen", state="normal"))
 
 def check_for_update(manual=False):
     if manual:
-        for b in (btn_check_update, update_button):
-            b.configure(text="Suche…", state="disabled")
+        update_button.configure(text="Suche…", state="disabled")
 
     def work():
         try:
