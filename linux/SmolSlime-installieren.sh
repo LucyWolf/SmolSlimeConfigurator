@@ -134,7 +134,7 @@ SERIAL_GROUP=""
 getent group uucp >/dev/null && SERIAL_GROUP=uucp
 getent group dialout >/dev/null && SERIAL_GROUP=dialout
 
-if [ -f "$RULE_FILE" ] && { [ -z "$SERIAL_GROUP" ] || id -nG | tr ' ' '\n' | grep -qx "$SERIAL_GROUP"; }; then
+if [ -f "$RULE_FILE" ] && grep -q 1915 "$RULE_FILE" && { [ -z "$SERIAL_GROUP" ] || id -nG | tr ' ' '\n' | grep -qx "$SERIAL_GROUP"; }; then
     : # schon eingerichtet, kein Passwort noetig
 else
     ROOT_CMD="
@@ -142,6 +142,8 @@ cat > '$RULE_FILE' << 'RULE'
 # SmolSlime / SlimeNRF (pid.codes 1209) — Zugriff fuer angemeldeten Benutzer
 SUBSYSTEM==\"tty\", ATTRS{idVendor}==\"1209\", TAG+=\"uaccess\"
 SUBSYSTEM==\"hidraw\", ATTRS{idVendor}==\"1209\", TAG+=\"uaccess\"
+# Nordic-Bootloader der Holyiot-/eByte-/Nordic-Dongles (Flashen der Dongle-Firmware)
+SUBSYSTEM==\"tty\", ATTRS{idVendor}==\"1915\", TAG+=\"uaccess\"
 RULE
 udevadm control --reload
 udevadm trigger --subsystem-match=tty --subsystem-match=hidraw

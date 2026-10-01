@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.30"
+APP_VERSION = "1.0.31"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -322,9 +322,11 @@ def fix_serial_permissions(parent=None):
         parent=parent or app,
     ):
         return False
-    rule = 'SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", TAG+="uaccess"'
+    # 1209 = SlimeNRF-Dongles/-Tracker, 1915 = Nordic-Bootloader der Holyiot-/eByte-/Nordic-Dongles
+    rules = ['SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", TAG+="uaccess"',
+             'SUBSYSTEM=="tty", ATTRS{idVendor}=="1915", TAG+="uaccess"']
     script = (
-        f"printf '%s\\n' '{rule}' > {UDEV_RULE_PATH}"
+        "printf '%s\\n' " + " ".join(f"'{r}'" for r in rules) + f" > {UDEV_RULE_PATH}"
         " && udevadm control --reload"
         " && udevadm trigger --subsystem-match=tty --action=change"
         " && udevadm settle --timeout=5"
@@ -2540,7 +2542,18 @@ def open_multiflash_window():
             found = {}
 
             # .hex: ueber den Nordic-Bootloader (Seriell-DFU) uebertragen
-            def flash_nordic(r, port):
+            def fix_permissions_and_wait():
+                result, ready = {}, threading.Event()
+
+                def ask():
+                    result["ok"] = fix_serial_permissions(win)
+                    ready.set()
+                ui(ask)
+                ready.wait()
+                time.sleep(1.0)   # udev setzt die Freigabe kurz danach
+                return result.get("ok", False)
+
+            def flash_nordic(r, port, retried=False):
                 def prog(done, total):
                     ui(lambda: set_status(r, f"überträgt … {done * 100 // total} %"))
                 try:
@@ -2548,6 +2561,10 @@ def open_multiflash_window():
                     ui(lambda: set_status(r, "geschrieben, startet neu…"))
                     return True
                 except Exception as e:
+                    if not retried and is_permission_error(e):
+                        ui(lambda: set_status(r, "kein Zugriff auf den Bootloader – Freigabe wird eingerichtet…", "orange"))
+                        if fix_permissions_and_wait():
+                            return flash_nordic(r, port, retried=True)
                     ui(lambda e=e: set_status(r, f"Übertragung fehlgeschlagen: {e}", "red"))
                     return False
 
