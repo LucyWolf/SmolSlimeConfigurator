@@ -36,7 +36,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.28"
+APP_VERSION = "1.0.29"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1486,29 +1486,30 @@ def parse_fw_name(name):
     opts = set(FW_TOKEN_ALIASES[t.lower()] for t in rest if t.lower() in FW_TOKEN_ALIASES)
     if any(t.lower() == "nosleepclk" for t in rest):
         opts |= {"NoSleep", "CLK"}
-    # Stacked Smol und Chrysalis haben den Taster fest eingebaut (SW0 ist in ihrem Board immer an)
-    if any(t.lower().startswith(("stackedsmol", "chrysalis")) for t in rest):
-        opts.add("SW0")
-    # Sensor-Takt gibt es nur an/aus. Ohne Angabe ist er beim Stacked Smol und bei Chrysalis an (ihr Board
-    # legt die Leitung fest), beim normalen ProMicro aus. Danach steht "CLK" genau dann drin, wenn er an ist.
-    board_clk = any(t.lower().startswith(("stackedsmol", "chrysalis")) for t in rest)
-    clk_on = "CLK" in opts or (board_clk and "NoCLK" not in opts)
-    opts -= {"CLK", "NoCLK"}
-    if clk_on:
-        opts.add("CLK")
-    # Sensor-Anschluss nur SPI oder I2C. Ohne Angabe ist der ProMicro I2C, Chrysalis und Bao sind SPI;
-    # smSPI ist SPI mit anderer Pinbelegung. Unbekannt bleibt es nur bei den Stacked-Smol-Sondervarianten.
-    if "smSPI" in opts:
-        opts -= {"smSPI"}
-        opts |= {"SPI", "SmolPins"}
-    elif not opts & {"SPI", "I2C"} and any(t.lower() == "promicro" for t in rest) \
-            and not any(t.startswith("StackedSmol_") for t in rest):
-        opts.add("SPI" if any(t.lower() in ("bao", "chrysalis") for t in rest) else "I2C")
-    # Schlafmodus ebenso als an/aus: "NoSleep" im Namen heisst aus, sonst an
-    if "NoSleep" in opts:
-        opts.discard("NoSleep")
-    else:
-        opts.add("Sleep")
+    if role == "tracker":   # Taster/Takt/Anschluss/Schlaf gibt es nur bei Trackern
+        # Stacked Smol und Chrysalis haben den Taster fest eingebaut (SW0 ist in ihrem Board immer an)
+        if any(t.lower().startswith(("stackedsmol", "chrysalis")) for t in rest):
+            opts.add("SW0")
+        # Sensor-Takt gibt es nur an/aus. Ohne Angabe ist er beim Stacked Smol und bei Chrysalis an (ihr Board
+        # legt die Leitung fest), beim normalen ProMicro aus. Danach steht "CLK" genau dann drin, wenn er an ist.
+        board_clk = any(t.lower().startswith(("stackedsmol", "chrysalis")) for t in rest)
+        clk_on = "CLK" in opts or (board_clk and "NoCLK" not in opts)
+        opts -= {"CLK", "NoCLK"}
+        if clk_on:
+            opts.add("CLK")
+        # Sensor-Anschluss nur SPI oder I2C. Ohne Angabe ist der ProMicro I2C, Chrysalis und Bao sind SPI;
+        # smSPI ist SPI mit anderer Pinbelegung. Unbekannt bleibt es nur bei den Stacked-Smol-Sondervarianten.
+        if "smSPI" in opts:
+            opts -= {"smSPI"}
+            opts |= {"SPI", "SmolPins"}
+        elif not opts & {"SPI", "I2C"} and any(t.lower() == "promicro" for t in rest) \
+                and not any(t.startswith("StackedSmol_") for t in rest):
+            opts.add("SPI" if any(t.lower() in ("bao", "chrysalis") for t in rest) else "I2C")
+        # Schlafmodus ebenso als an/aus: "NoSleep" im Namen heisst aus, sonst an
+        if "NoSleep" in opts:
+            opts.discard("NoSleep")
+        else:
+            opts.add("Sleep")
     return {
         "role": role,
         "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() != "nosleepclk"
@@ -1619,7 +1620,7 @@ def open_multiflash_window():
     head = ctk.CTkFrame(win, fg_color="transparent")
     head.pack(fill="x", padx=20, pady=(16, 4))
     ctk.CTkLabel(head, text="DIY Firmware-Tool", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
-    ctk.CTkLabel(head, text="Erlaubt dir das Konfigurieren und Flashen von DIY-Trackern", text_color=FW_DIM).pack(anchor="w")
+    ctk.CTkLabel(head, text="Erlaubt dir das Konfigurieren und Flashen von DIY-Trackern und Dongles", text_color=FW_DIM).pack(anchor="w")
 
     body = ctk.CTkScrollableFrame(win, fg_color="transparent")
     body.pack(fill="both", expand=True, padx=10, pady=(4, 10))
@@ -1702,6 +1703,10 @@ def open_multiflash_window():
             w.bind("<Button-1>", lambda e, s=src: select_source(s))
         src_cards[src["id"]] = card
 
+    role_seg = ctk.CTkSegmentedButton(col_board, values=["Tracker", "Dongle"],
+                                      command=lambda v: set_role("dongle" if v == "Dongle" else "tracker"))
+    role_seg.set("Tracker")
+    role_seg.pack(fill="x", padx=10, pady=(12, 0))
     board_menu = ctk.CTkOptionMenu(col_board, values=["Keine Quelle ausgewählt"], state="disabled",
                                    command=lambda v: set_board(board_map.get(v)))
     board_menu.set("Keine Quelle ausgewählt")
@@ -1835,6 +1840,15 @@ def open_multiflash_window():
     def set_board(board):
         st["board"] = board
         update_next1()
+
+    def set_role(role):
+        if st["busy"] or role == st["role"]:
+            return
+        st["role"] = role
+        st["board"] = None
+        role_seg.set("Dongle" if role == "dongle" else "Tracker")
+        if st["release"]:
+            refresh_boards()
 
     def refresh_boards():
         boards = sorted({a["board"] for a in st["release"]["assets"] if a["role"] == st["role"]}) if st["release"] else []
@@ -2032,7 +2046,11 @@ def open_multiflash_window():
             ctk.CTkLabel(box, text="Für dieses Board gibt es nur eine Bauweise.", text_color=FW_DIM).grid(
                 row=0, column=0, sticky="w", padx=12, pady=10)
         update_result()
-        build_settings(adv)
+        if st["role"] == "tracker":
+            build_settings(adv)
+        else:
+            setting_widgets.clear()
+            led_ui.clear()
 
     # Laufzeit-Einstellungen: "Standard" = nichts schreiben. Werte stehen in
     # der Anzeige-Einheit (s, min, h); beim Schreiben wird umgerechnet.
@@ -2305,7 +2323,7 @@ def open_multiflash_window():
         method = tk.StringVar(value="uf2" if is_uf2 else "")
         ctk.CTkRadioButton(box, text="UF2-Laufwerk – Gerät startet in den Bootloader, die Datei wird kopiert",
                            variable=method, value="uf2", state="normal" if is_uf2 else "disabled").pack(anchor="w", padx=12, pady=(10, 4))
-        ctk.CTkRadioButton(box, text="Seriell (nrfutil) – für .hex-Dateien, noch nicht verfügbar",
+        ctk.CTkRadioButton(box, text="nRF Connect – für .hex-Dateien, Anleitung unten",
                            variable=method, value="serial", state="disabled").pack(anchor="w", padx=12, pady=(4, 10))
         if st["role"] == "tracker":
             ctk.CTkCheckBox(box, text="Kopplungsdaten vorher löschen (danach neu koppeln)",
@@ -2314,9 +2332,28 @@ def open_multiflash_window():
         if is_uf2:
             nxt.configure(state="normal")
         else:
-            ctk.CTkLabel(f4, text=f"{st['asset']['name']} ist eine .hex-Datei. Dafür gibt es noch keine "
-                                  "funktionierende Flash-Methode.", text_color="red", anchor="w",
-                         justify="left", wraplength=700).grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
+            # Laut SlimeVR-Doku (Smol Flashing) geht der Nordic-Bootloader dieser Dongles nur mit nRF Connect
+            hexbox = ctk.CTkFrame(f4, fg_color=FW_CARD, corner_radius=10)
+            hexbox.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
+            ctk.CTkLabel(hexbox, text=(
+                f"{st['asset']['name']} gibt es nur als .hex. Dieser Dongle hat den Nordic-Bootloader "
+                "(„Open DFU Bootloader“) – laut SlimeVR-Doku geht das nur mit nRF Connect for Desktop:\n\n"
+                "1. Datei herunterladen (Knopf unten).\n"
+                "2. Diese App schließen, in nRF Connect den „Programmer“ öffnen.\n"
+                "3. Dongle in den Bootloader bringen – die LED pulsiert dann:\n"
+                "     HolyIOT-21017: mitgelieferten Magneten (steckt im USB-Stecker) an die LED halten\n"
+                "     eByte: rechter Knopf · Nordic-Dongle: seitlicher Knopf\n"
+                "4. Oben links das Gerät wählen, „Add File“, die .hex wählen, „Write“."),
+                anchor="w", justify="left", wraplength=700).pack(anchor="w", padx=12, pady=(10, 6))
+            links = ctk.CTkFrame(hexbox, fg_color="transparent")
+            links.pack(anchor="w", padx=12, pady=(0, 10))
+            if st["asset"].get("url"):
+                ctk.CTkButton(links, text="⬇ Datei herunterladen", fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
+                              text_color="white",
+                              command=lambda u=st["asset"]["url"]: webbrowser.open(u)).pack(side="left", padx=(0, 8))
+            ctk.CTkButton(links, text="Anleitung in der Doku ↗",
+                          command=lambda: webbrowser.open(
+                              "https://docs.slimevr.dev/smol-slimes/firmware/smol-flashing-firmware.html")).pack(side="left")
 
     # ---------- 5: Flashen ----------
     f5 = make_step(4, "Flashen", "Firmware aufspielen")
