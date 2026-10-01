@@ -1150,7 +1150,7 @@ def guess_board(product, boards):
 def open_multiflash_window():
     global multi_win
     if not sys.platform.startswith("linux"):
-        append_text("Die Geräteverwaltung gibt es nur unter Linux.\n", "error")
+        append_text("Das DIY Firmware-Tool gibt es nur unter Linux.\n", "error")
         return
     if multi_win is not None and multi_win.winfo_exists():
         multi_win.focus()
@@ -1158,7 +1158,7 @@ def open_multiflash_window():
 
     win = ctk.CTkToplevel(app, fg_color=FW_BG)
     multi_win = win
-    win.title("Geräteverwaltung – Tracker")
+    win.title("DIY Firmware-Tool")
     win.geometry("880x780")
     win.transient(app)
 
@@ -1177,8 +1177,8 @@ def open_multiflash_window():
 
     head = ctk.CTkFrame(win, fg_color="transparent")
     head.pack(fill="x", padx=20, pady=(16, 4))
-    ctk.CTkLabel(head, text="Firmware-Tool", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
-    ctk.CTkLabel(head, text="Tracker konfigurieren und flashen", text_color=FW_DIM).pack(anchor="w")
+    ctk.CTkLabel(head, text="DIY Firmware-Tool", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+    ctk.CTkLabel(head, text="Erlaubt dir das Konfigurieren und Flashen von DIY-Trackern", text_color=FW_DIM).pack(anchor="w")
 
     body = ctk.CTkScrollableFrame(win, fg_color="transparent")
     body.pack(fill="both", expand=True, padx=10, pady=(4, 10))
@@ -1758,9 +1758,9 @@ btn_download_fw = ctk.CTkButton(top_frame, text="⬇ Firmware", width=80, comman
 btn_download_fw.pack(side="left", padx=5)
 ToolTip(btn_download_fw, "Upgrade your firmware!")
 
-btn_multi_fw = ctk.CTkButton(top_frame, text="⧉ Geräteverwaltung", width=80, command=open_multiflash_window)
+btn_multi_fw = ctk.CTkButton(top_frame, text="DIY Firmware-Tool", width=80, command=open_multiflash_window)
 btn_multi_fw.pack(side="left", padx=5)
-ToolTip(btn_multi_fw, "Tracker und Dongle verwalten und auf einmal flashen")
+ToolTip(btn_multi_fw, "Tracker konfigurieren und auf einmal flashen")
 
 status_label = ctk.CTkLabel(top_frame, text="Not connected", text_color="red")
 status_label.pack(side="left", padx=10)
