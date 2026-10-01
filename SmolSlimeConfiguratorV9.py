@@ -259,148 +259,316 @@ def fix_serial_permissions(parent=None):
     append_text("USB-Rechte eingerichtet.\n" if ok else "USB-Rechte nicht eingerichtet.\n", "success" if ok else "error")
     return ok
 
-# El button to connect your Smol Slimes to El program
-def connect_to_port(_retried=False):
-    global ser, connected, read_thread, stop_read
+# Mehrere Geraete gleichzeitig: jedes verbundene Geraet (Dongle, Tracker) hat
+# eine eigene Verbindung und ein eigenes Terminal, links wird umgeschaltet.
+# So kann man Dongle und Tracker koppeln, ohne das Programm zweimal zu oeffnen.
+# "ser"/"connected" zeigen immer auf das gewaehlte Geraet, damit send_command
+# und das Firmware-Flashen unveraendert weiterarbeiten.
+class Device:
+    def __init__(self, info):
+        self.port = info.device
+        self.serial_number = info.serial_number or ""
+        self.location = (info.location or "").split(":")[0]
+        self.product = info.product or info.description or ""
+        self.ser = None
+        self.stop = threading.Event()
+        self.paused = False      # waehrend des Flashens nicht neu verbinden
+        self.manual_off = False  # vom Benutzer getrennt
+        self.last_error = None
+        self.number = 0
+        self.console = None
+        self.button = None
 
+    @property
+    def key(self):
+        return self.serial_number or self.location or self.port
+
+    @property
+    def is_dongle(self):
+        return bool(self.serial_number) and self.serial_number == settings.get("dongle_serial")
+
+    @property
+    def is_receiver(self):
+        return self.is_dongle or "receiver" in self.product.lower()
+
+    @property
+    def connected(self):
+        return self.ser is not None and self.ser.is_open
+
+    def matches(self, info):
+        if self.serial_number:
+            return info.serial_number == self.serial_number
+        return (info.location or "").split(":")[0] == self.location
+
+devices = []
+active_device = None
+
+def device_name(dev):
+    custom = settings.get("device_names", {}).get(dev.key)
+    if custom:
+        return custom
+    if dev.is_dongle:
+        return "📡 Dongle"
+    if dev.is_receiver:
+        return "Empfänger"
+    return f"Tracker {dev.number}"
+
+def make_console():
+    box = ctk.CTkTextbox(console_area, height=220, corner_radius=10)
+    box.tag_config("red", foreground="red")
+    box.tag_config("green", foreground="lime")
+    box.configure(state="disabled")
+    return box
+
+def get_or_add_device(info):
+    for dev in devices:
+        if dev.matches(info):
+            dev.port = info.device
+            return dev
+    dev = Device(info)
+    dev.number = 1 + sum(1 for d in devices if not d.is_receiver)
+    dev.console = make_console()
+    dev.button = ctk.CTkButton(device_list, text=device_name(dev), width=110,
+                               command=lambda d=dev: select_device(d))
+    dev.button.bind("<Button-3>", lambda e, d=dev: open_device_menu(d, e))
+    ToolTip(dev.button, "Rechtsklick: trennen, umbenennen, als Dongle festlegen")
+    devices.append(dev)
+    refresh_sidebar()
+    return dev
+
+def refresh_sidebar():
+    for dev in devices:
+        dev.button.pack_forget()
+    for dev in sorted(devices, key=lambda d: not d.is_dongle):
+        active = dev is active_device
+        dev.button.configure(
+            text=device_name(dev),
+            fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"] if active else ("gray75", "gray25"),
+            text_color=ctk.ThemeManager.theme["CTkButton"]["text_color"] if dev.connected else "gray50",
+        )
+        dev.button.pack(fill="x", pady=2)
+
+def sync_active():
+    global ser, connected
+    dev = active_device
+    ser = dev.ser if dev and dev.connected else None
+    connected = ser is not None
+    if dev is None:
+        status_label.configure(text="Not connected", text_color="red")
+    elif connected:
+        status_label.configure(text=f"{device_name(dev)}: Connected to {dev.port}", text_color="green")
+    else:
+        status_label.configure(text=f"{device_name(dev)}: getrennt", text_color="orange")
+
+def select_device(dev):
+    global active_device, console
+    active_device = dev
+    console.pack_forget()
+    console = dev.console if dev else base_console
+    console.pack(fill="both", expand=True)
+    if dev and tab_view.get() != "Settings":
+        tab_view.set("Receiver" if dev.is_receiver else "Tracker")
+    refresh_sidebar()
+    sync_active()
+
+def connect_device(dev, ask=True, parent=None, quiet=False):
+    dev.last_error = None
+    try:
+        dev.ser = serial.Serial(dev.port, 115200, timeout=1)
+    except serial.SerialException as e:
+        dev.ser = None
+        dev.last_error = e
+        if ask and is_permission_error(e) and fix_serial_permissions(parent):
+            return connect_device(dev, ask=False, parent=parent, quiet=quiet)
+        if not quiet:
+            append_text(f"Failed to connect: {e}\n", "error", dev)
+        refresh_sidebar()
+        sync_active()
+        return False
+    dev.stop = threading.Event()
+    threading.Thread(target=read_serial, args=(dev,), daemon=True).start()
+    append_text(f"Connected to {dev.port}\n", "success", dev)
+    refresh_sidebar()
+    sync_active()
+    return True
+
+def disconnect_device(dev):
+    dev.stop.set()
+    try:
+        if dev.ser:
+            with ser_lock:
+                dev.ser.close()
+    except Exception:
+        pass
+    dev.ser = None
+
+def device_lost(dev, msg):
+    if dev.ser is None and dev.stop.is_set():
+        return
+    disconnect_device(dev)
+    if msg:
+        append_text(msg, "error", dev)
+    refresh_sidebar()
+    sync_active()
+
+def remove_device(dev):
+    disconnect_device(dev)
+    devices.remove(dev)
+    dev.button.destroy()
+    if dev is active_device:
+        select_device(devices[0] if devices else None)
+    dev.console.destroy()
+    refresh_sidebar()
+
+def open_device_menu(dev, event):
+    menu = tk.Menu(app, tearoff=0)
+    if dev.connected:
+        menu.add_command(label="Trennen", command=lambda: (setattr(dev, "manual_off", True), device_lost(dev, "Getrennt.\n")))
+    else:
+        menu.add_command(label="Verbinden", command=lambda: (setattr(dev, "manual_off", False), connect_device(dev)))
+    if dev.is_dongle:
+        menu.add_command(label="Dongle-Festlegung aufheben", command=lambda: set_dongle(None))
+    elif dev.serial_number:
+        menu.add_command(label="Als Dongle festlegen", command=lambda: set_dongle(dev))
+    menu.add_command(label="Umbenennen…", command=lambda: rename_device(dev))
+    menu.add_separator()
+    menu.add_command(label="Entfernen", command=lambda: remove_device(dev))
+    menu.tk_popup(event.x_root, event.y_root)
+
+def set_dongle(dev):
+    settings["dongle_serial"] = dev.serial_number if dev else ""
+    save_settings()
+    refresh_sidebar()
+    sync_active()
+    if dev:
+        append_text("Als Dongle festgelegt. Er verbindet sich ab jetzt von selbst.\n", "success", dev)
+
+def rename_device(dev):
+    name = ctk.CTkInputDialog(text="Neuer Name (leer = Standard):", title="Umbenennen").get_input()
+    if name is None:
+        return
+    names = settings.setdefault("device_names", {})
+    if name.strip():
+        names[dev.key] = name.strip()
+    else:
+        names.pop(dev.key, None)
+    save_settings()
+    refresh_sidebar()
+    sync_active()
+
+# Getrennte Geraete wieder verbinden (nach Neustart, Flash, Umstecken) und
+# den festgelegten Dongle von selbst dazuholen.
+def watch_devices():
+    try:
+        ports = serial.tools.list_ports.comports()
+        dongle = settings.get("dongle_serial")
+        if dongle and not any(d.serial_number == dongle for d in devices):
+            info = next((p for p in ports if p.serial_number == dongle), None)
+            if info:
+                dev = get_or_add_device(info)
+                if connect_device(dev, ask=False, quiet=True) and active_device is None:
+                    select_device(dev)
+        for dev in devices:
+            if dev.connected or dev.paused or dev.manual_off:
+                continue
+            info = next((p for p in ports if dev.matches(p)), None)
+            if info:
+                dev.port = info.device
+                connect_device(dev, ask=False, quiet=True)
+    except Exception:
+        pass
+    app.after(2000, watch_devices)
+
+# Dongle und alle verbundenen Tracker gleichzeitig in den Kopplungsmodus
+def pair_all():
+    dongle = next((d for d in devices if d.is_dongle and d.connected), None) \
+        or next((d for d in devices if d.is_receiver and d.connected), None)
+    trackers = [d for d in devices if not d.is_receiver and d.connected]
+    if not dongle:
+        append_text("Kein Dongle verbunden.\n", "error")
+        return
+    if not trackers:
+        append_text("Kein Tracker verbunden.\n", "error")
+        return
+    send_command("pair", dongle)
+    for d in trackers:
+        send_command("pair", d)
+    append_text(f"Kopplungsmodus: Dongle + {len(trackers)} Tracker.\n", "success")
+
+# El button to connect your Smol Slimes to El program
+def connect_to_port():
     port = port_option.get()
     if not port or "No ports" in port:
         append_text("No valid port selected.\n", "error")
         return
-
-    if ser and ser.is_open:
-        stop_read.set()
-        try:
-            ser.close()
-        except Exception:
-            pass
-        ser = None
-        connected = False
-
-    stop_read = threading.Event()
-
-    try:
-        ser = serial.Serial(port, 115200, timeout=1)
-        connected = True
-        status_label.configure(text=f"Connected to {port}", text_color="green")
-        append_text(f"Connected to {port}\n", "success")
-
-        read_thread = threading.Thread(target=read_serial, daemon=True)
-        read_thread.start()
-
-    except serial.SerialException as e:
-        if not _retried and is_permission_error(e) and fix_serial_permissions():
-            return connect_to_port(_retried=True)
-        append_text(f"Failed to connect: {e}\n")
-        status_label.configure(text="Connection failed", text_color="red")
-
-# If smolslime escapes (disconnects) de program tries to catch it and put it back in the dungeon (reconnects)
-def attempt_reconnect():
-    global ser, connected, stop_read, read_thread
-
-    port = port_option.get()
-    if not port or "No ports" in port:
-        append_text("No valid port to reconnect.\n")
+    info = next((p for p in serial.tools.list_ports.comports() if p.device == port), None)
+    if info is None:
+        append_text(f"{port} ist nicht mehr da.\n", "error")
+        refresh_ports()
         return
+    dev = get_or_add_device(info)
+    dev.manual_off = False
+    if not dev.connected and not connect_device(dev):
+        status_label.configure(text="Connection failed", text_color="red")
+    select_device(dev)
 
-    def reconnect_loop():
-        global ser, connected, stop_read, read_thread
-        retries = 0
-        max_retries = 15 // 2
-
-        while not connected and retries < max_retries:
-            try:
-                if ser and ser.is_open:
-                    with ser_lock:
-                        ser.close()
-                    ser = None
-
-                ser = serial.Serial(port, 115200, timeout=1)
-                connected = True
-                stop_read.clear()
-                read_thread = threading.Thread(target=read_serial, daemon=True)
-                read_thread.start()
-                status_label.configure(text=f"Connected to {port}", text_color="green")
-                append_text("\nSuccessfully reconnected!\n", "success")
-                break
-
-            except serial.SerialException:
-                retries += 1
-                append_text(".", None)
-                console.update_idletasks()
-                time.sleep(2)
-
-        if not connected:
-            append_text("\nFailed to reconnect.\n", "error")
-            status_label.configure(text="Not connected", text_color="red")
-
-    threading.Thread(target=reconnect_loop, daemon=True).start()
 
 # Send commands via serial,
-def send_command(cmd):
-    global ser, connected
-    if ser and ser.is_open:
+def send_command(cmd, dev=None):
+    dev = dev or active_device
+    if dev and dev.connected:
         try:
             with ser_lock:
-                ser.write((cmd + "\n").encode())
-            append_text(f">>> {cmd}\n")
+                dev.ser.write((cmd + "\n").encode())
+            append_text(f">>> {cmd}\n", None, dev)
         except (serial.SerialException, OSError) as e:
-            append_text(f"[Error] Serial write failed: {e}\n", "error")
-            disconnect_serial()
+            device_lost(dev, f"[Error] Serial write failed: {e}\n")
     else:
-        append_text("Not connected.\n", "error")
+        append_text("Not connected.\n", "error", dev)
 
-def read_serial():
-    global ser, stop_read, connected
-    while not stop_read.is_set():
+def read_serial(dev):
+    s = dev.ser
+    while not dev.stop.is_set():
         try:
-            if ser and ser.in_waiting:
+            if s.in_waiting:
                 with ser_lock:
-                    line = ser.readline().decode(errors="ignore").rstrip('\r\n \t')
+                    line = s.readline().decode(errors="ignore").rstrip('\r\n \t')
                 if line:
-                    serial_queue.put(line)
+                    serial_queue.put((dev, line + "\n", None))
             else:
                 time.sleep(0.01)
-        except (OSError, serial.SerialException) as e:
-            append_text(f"Device disconnected: {e}\n", "error")
-            disconnect_serial()
-            attempt_reconnect()
+        except Exception as e:
+            if not dev.stop.is_set():
+                serial_queue.put((dev, None, f"Device disconnected: {e}\n"))
             break
 
 
 def disconnect_serial():
-    global ser, connected
-    try:
-        if ser:
-            with ser_lock:
-                ser.close()
-    except Exception:
-        pass
-    ser = None
-    connected = False
-    status_label.configure(text="Not connected", text_color="red")
+    if active_device:
+        device_lost(active_device, None)
 
 # Let the code add MORE!! (more lines of serial that is)
-def append_text(text, color=None):
-    console.configure(state="normal")
+def append_text(text, color=None, dev=None):
+    box = dev.console if dev and dev.console else console
+    box.configure(state="normal")
     tag = None
     if color == "error":
         tag = "red"
     elif color == "success":
         tag = "green"
 
-    at_bottom = console.yview()[1] == 1.0
+    at_bottom = box.yview()[1] == 1.0
 
     if tag:
-        console.insert("end", text, tag)
+        box.insert("end", text, tag)
     else:
-        console.insert("end", text)
+        box.insert("end", text)
 
     if at_bottom:
-        console.see("end")
+        box.see("end")
 
-    console.update_idletasks()
-    console.configure(state="disabled")
+    box.update_idletasks()
+    box.configure(state="disabled")
 
 # The thing that asks for the custom .U2F
 def on_tracker_change(choice):
@@ -649,6 +817,9 @@ def flash_hex_firmware(file_path):
     time.sleep(2)
 
     port = ser.port
+    flashing_dev = active_device
+    if flashing_dev:
+        flashing_dev.paused = True
     append_text(f"Starting Flash on port: {port}...\n")
     ser.close()
     ser = None
@@ -684,6 +855,8 @@ def flash_hex_firmware(file_path):
     except subprocess.CalledProcessError as e:
         append_text(f"Error code: {e}\n", "error")
     finally:
+        if flashing_dev:
+            flashing_dev.paused = False
         try:
             if os.path.exists(dfu_package):
                 os.remove(dfu_package)
@@ -823,7 +996,9 @@ def list_tracker_ports():
             "device": p.device,
             "name": name,
             "location": (p.location or "").split(":")[0],
-            "receiver": "receiver" in name.lower(),
+            "serial": p.serial_number or "",
+            "receiver": "receiver" in name.lower()
+                        or (bool(p.serial_number) and p.serial_number == settings.get("dongle_serial")),
         })
     return found
 
@@ -940,18 +1115,9 @@ def open_multiflash_window():
     def row_port(r):
         return label_to_port.get(r["var"].get())
 
-    def close_row(r):
-        if r["ser"]:
-            try:
-                r["ser"].close()
-            except Exception:
-                pass
-        r["ser"] = None
-
     def remove_row(r):
         if busy["on"]:
             return
-        close_row(r)
         r["frame"].destroy()
         rows.remove(r)
 
@@ -963,10 +1129,10 @@ def open_multiflash_window():
             label = free[0] if free else "Kein Tracker gefunden"
         frame = ctk.CTkFrame(list_frame)
         frame.pack(fill="x", pady=2)
-        r = {"frame": frame, "var": tk.StringVar(value=label), "ser": None, "location": ""}
+        r = {"frame": frame, "var": tk.StringVar(value=label), "dev": None}
         ctk.CTkLabel(frame, text=f"#{len(rows) + 1}", width=30).pack(side="left", padx=(5, 0))
         r["menu"] = ctk.CTkOptionMenu(frame, values=values, variable=r["var"], width=330,
-                                      command=lambda _v, rr=r: (close_row(rr), set_status(rr, "")))
+                                      command=lambda _v, rr=r: (rr.update(dev=None), set_status(rr, "")))
         r["menu"].pack(side="left", padx=5, pady=4)
         r["status"] = ctk.CTkLabel(frame, text="", anchor="w")
         r["status"].pack(side="left", fill="x", expand=True, padx=5)
@@ -985,30 +1151,29 @@ def open_multiflash_window():
             return
         refresh_choices()
         asked = False
+        infos = serial.tools.list_ports.comports()
         for r in rows:
-            close_row(r)
             p = row_port(r)
-            if not p:
+            info = next((i for i in infos if p and i.device == p["device"]), None)
+            if not info:
+                r["dev"] = None
                 set_status(r, "kein Port", "red")
                 continue
-            for attempt in (1, 2):
-                try:
-                    r["ser"] = serial.Serial(p["device"], 115200, timeout=1)
-                    r["location"] = p["location"]
-                    set_status(r, "verbunden", "green")
-                    break
-                except serial.SerialException as e:
-                    if attempt == 1 and is_permission_error(e) and not asked:
-                        asked = True
-                        if fix_serial_permissions(win):
-                            continue
-                    set_status(r, "keine Berechtigung" if is_permission_error(e) else f"Fehler: {e}", "red")
-                    break
+            dev = get_or_add_device(info)
+            dev.manual_off = False
+            r["dev"] = dev
+            if dev.connected or connect_device(dev, ask=not asked, parent=win):
+                set_status(r, f"verbunden ({device_name(dev)})", "green")
+                continue
+            e = dev.last_error
+            if e is not None and is_permission_error(e):
+                asked = True
+            set_status(r, "keine Berechtigung" if e is not None and is_permission_error(e) else f"Fehler: {e}", "red")
 
     def flash_all():
         if busy["on"]:
             return
-        targets = [r for r in rows if r["ser"] and r["ser"].is_open]
+        targets = [r for r in rows if r["dev"] and r["dev"].connected and not r["dev"].is_dongle]
         if not targets:
             info_label.configure(text="Erst „Alle verbinden“ drücken.", text_color="red")
             return
@@ -1045,16 +1210,22 @@ def open_multiflash_window():
 
             before = set(find_usb_drives())
             for r in targets:
+                dev = r["dev"]
+                dev.paused = True
+                r["location"] = dev.location
                 try:
-                    if clear:
-                        r["ser"].write(b"clear\n")
-                        time.sleep(0.5)
-                    r["ser"].write(b"dfu\n")
-                    r["ser"].flush()
+                    with ser_lock:
+                        if clear:
+                            dev.ser.write(b"clear\n")
+                            time.sleep(0.5)
+                        dev.ser.write(b"dfu\n")
+                        dev.ser.flush()
                     ui(lambda rr=r: set_status(rr, "Bootloader…"))
                 except Exception as e:
                     ui(lambda rr=r, e=e: set_status(rr, f"dfu fehlgeschlagen: {e}", "red"))
-                close_row(r)
+                disconnect_device(dev)
+                ui(refresh_sidebar)
+                ui(sync_active)
 
             ui(lambda: info_label.configure(text="Warte auf die UF2-Laufwerke…", text_color="gray"))
             pending = {r["location"]: r for r in targets if r["location"]}
@@ -1111,8 +1282,10 @@ def open_multiflash_window():
             ui(lambda: info_label.configure(text=f"{ok} von {len(targets)} fertig.", text_color="green" if ok == len(targets) else "orange"))
             ui(lambda: append_text(f"Mehrfach-Flash: {ok} von {len(targets)} Trackern mit {os.path.basename(fw_path)} geflasht.\n", "success"))
         except Exception as e:
-            ui(lambda: info_label.configure(text=f"Fehler: {e}", text_color="red"))
+            ui(lambda e=e: info_label.configure(text=f"Fehler: {e}", text_color="red"))
         finally:
+            for r in targets:
+                r["dev"].paused = False  # watch_devices verbindet sie wieder
             busy["on"] = False
             ui(lambda: [b.configure(state="normal") for b in action_buttons])
 
@@ -1139,8 +1312,6 @@ def open_multiflash_window():
     def on_close():
         if busy["on"]:
             return
-        for r in rows:
-            close_row(r)
         win.destroy()
 
     win.protocol("WM_DELETE_WINDOW", on_close)
@@ -1355,13 +1526,23 @@ repo_button.pack(side="left", padx=10)
 ToolTip(repo_button, "github.com/ICantMakeThings/SmolSlimeConfigurator")
 
 
-# CLI
-console = ctk.CTkTextbox(app, width=1000, height=220, corner_radius=10)
-console.tag_config("red", foreground="red")
-console.tag_config("green", foreground="lime")
+# CLI, links daneben die Geraete zum Umschalten
+console_row = ctk.CTkFrame(app, fg_color="transparent")
 
-console.pack(pady=(0, 5), padx=10)
-console.configure(state="disabled")
+sidebar = ctk.CTkFrame(console_row, width=130)
+sidebar.pack(side="left", fill="y", padx=(0, 5))
+btn_pair_all = ctk.CTkButton(sidebar, text="🔗 Koppeln", width=110, command=pair_all)
+btn_pair_all.pack(side="bottom", fill="x", padx=5, pady=5)
+device_list = ctk.CTkScrollableFrame(sidebar, width=110, fg_color="transparent")
+device_list.pack(fill="both", expand=True, padx=2, pady=(2, 0))
+ToolTip(btn_pair_all, "Dongle und alle verbundenen Tracker gleichzeitig in den Kopplungsmodus")
+
+console_area = ctk.CTkFrame(console_row, fg_color="transparent")
+console_area.pack(side="left", fill="both", expand=True)
+
+console = make_console()
+base_console = console
+console.pack(fill="both", expand=True)
 
 def send_custom_command():
     cmd = command_entry.get().strip()
@@ -1370,7 +1551,7 @@ def send_custom_command():
         command_entry.delete(0, "end")
 
 entry_frame = ctk.CTkFrame(app)
-entry_frame.pack(pady=5, padx=10, fill="x")
+entry_frame.pack(side="bottom", pady=5, padx=10, fill="x")
 
 command_entry = ctk.CTkEntry(entry_frame, placeholder_text="Enter custom command...")
 command_entry.pack(side="left", fill="x", expand=True, padx=(0, 5), pady=5)
@@ -1380,6 +1561,9 @@ btn_send.pack(side="left", pady=5)
 
 btn_clear = ctk.CTkButton(entry_frame, text="X", width=30, command=lambda: console.configure(state="normal") or console.delete("1.0", "end") or console.configure(state="disabled"))
 btn_clear.pack(side="left", padx=(5,0), pady=5)
+
+# Erst nach der Eingabezeile packen, damit die nicht abgeschnitten wird
+console_row.pack(pady=(0, 5), padx=10, fill="both", expand=True)
 ToolTip(btn_clear, "Clear")
 
 command_entry.bind("<Return>", lambda event: send_custom_command())
@@ -1407,9 +1591,14 @@ elif sys.platform.startswith("linux") or sys.platform.startswith("darwin"):
 
 def flush_serial_queue():
     while not serial_queue.empty():
-        append_text(serial_queue.get() + "\n")
+        dev, line, lost = serial_queue.get()
+        if line is not None:
+            append_text(line, None, dev)
+        else:
+            device_lost(dev, lost)
     app.after(50, flush_serial_queue)
 
 app.after(50, flush_serial_queue)
+app.after(500, watch_devices)
 # The MOST PORTAN' PART!!!
 app.mainloop()
