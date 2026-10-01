@@ -35,7 +35,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -1236,8 +1236,9 @@ FW_OPTION_HELP = {
     "sleep": "Normalerweise legt sich der Tracker schlafen, wenn er still liegt, und wacht bei Bewegung wieder auf. "
              "Das spart viel Akku. Mit „Schlafmodus aus“ bleibt er immer wach: Er reagiert sofort, aber der Akku "
              "hält deutlich kürzer. Sinnvoll, wenn dein Sensor das Aufwecken durch Bewegung nicht kann.",
-    "sw0": "Nur wählen, wenn an Pin SW0 ein Taster angeschlossen ist. Damit kannst du z. B. koppeln "
-           "(5 Sekunden halten) oder den Tracker ausschalten.",
+    "sw0": "Nur für einen Taster (drücken, federt zurück) zwischen Pin P1.00 und GND. Damit kannst du koppeln "
+           "(5 Sekunden halten), ausschalten und aufwecken. Ein Ein/Aus-Schiebeschalter zwischen Akku und Board "
+           "ist kein SW0 – dafür nicht anhaken. Ein Taster am RST-Pin funktioniert auch ohne diese Option.",
     "tdma": "Neuerer Funkmodus mit festen Zeitfenstern pro Tracker – kann bei vielen Trackern stabiler sein. "
             "Achtung: Der Dongle braucht dann ebenfalls TDMA-Firmware, sonst verbinden sie sich nicht.",
     "data": "Gibt zusätzlich Rohdaten über USB aus. Nur für Fehlersuche oder Entwicklung.",
