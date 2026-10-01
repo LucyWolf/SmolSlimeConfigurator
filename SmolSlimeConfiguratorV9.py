@@ -14,6 +14,7 @@ import tempfile
 import json
 import webbrowser
 import re
+import glob
 from tkinter import filedialog
 import tkinter as tk
 import queue
@@ -223,8 +224,43 @@ def refresh_ports():
         port_option.configure(values=["No ports found"])
         port_option.set("No ports found")
 
+# Linux sperrt /dev/ttyACM* fuer normale Benutzer (Arch: Gruppe uucp). Statt
+# "Permission denied" einmal per Passwortfenster eine udev-Regel setzen, die
+# dem angemeldeten Benutzer SlimeNRF-Geraete (USB-Hersteller 1209) freigibt.
+UDEV_RULE_PATH = "/etc/udev/rules.d/70-smolslime.rules"
+
+def is_permission_error(e):
+    return getattr(e, "errno", None) == 13 or "Permission denied" in str(e)
+
+def fix_serial_permissions(parent=None):
+    if not sys.platform.startswith("linux") or not shutil.which("pkexec"):
+        return False
+    from tkinter import messagebox
+    if not messagebox.askyesno(
+        "Keine Berechtigung",
+        "Linux erlaubt den Zugriff auf den USB-Anschluss nicht.\n\n"
+        "Jetzt einmalig einrichten? Danach fragt ein Fenster nach deinem Passwort.",
+        parent=parent or app,
+    ):
+        return False
+    rule = 'SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", TAG+="uaccess"'
+    script = (
+        f"printf '%s\\n' '{rule}' > {UDEV_RULE_PATH}"
+        " && udevadm control --reload"
+        " && udevadm trigger --subsystem-match=tty --action=change"
+        " && udevadm settle --timeout=5"
+    )
+    if subprocess.run(["getent", "group", "uucp"], capture_output=True).returncode == 0:
+        script += f" ; usermod -aG uucp {os.environ.get('USER', '')}"
+    try:
+        ok = subprocess.run(["pkexec", "/bin/sh", "-c", script]).returncode == 0
+    except Exception:
+        ok = False
+    append_text("USB-Rechte eingerichtet.\n" if ok else "USB-Rechte nicht eingerichtet.\n", "success" if ok else "error")
+    return ok
+
 # El button to connect your Smol Slimes to El program
-def connect_to_port():
+def connect_to_port(_retried=False):
     global ser, connected, read_thread, stop_read
 
     port = port_option.get()
@@ -253,6 +289,8 @@ def connect_to_port():
         read_thread.start()
 
     except serial.SerialException as e:
+        if not _retried and is_permission_error(e) and fix_serial_permissions():
+            return connect_to_port(_retried=True)
         append_text(f"Failed to connect: {e}\n")
         status_label.configure(text="Connection failed", text_color="red")
 
@@ -770,6 +808,344 @@ def download_firmware():
         progress_bar.pack_forget()
 
 
+# Mehrere Tracker auf einmal flashen (nur .uf2). Ablauf: alle verbinden ->
+# jedem "dfu" schicken -> warten bis die UF2-Laufwerke da sind -> Datei auf
+# jedes kopieren -> pruefen, ob der Tracker danach wieder als Port auftaucht.
+# Tracker und Laufwerk gehoeren ueber den USB-Steckplatz (z.B. "1-5.2")
+# zusammen; der bleibt beim Wechsel in den Bootloader gleich.
+def list_tracker_ports():
+    found = []
+    for p in serial.tools.list_ports.comports():
+        if sys.platform.startswith("linux") and not ("ttyACM" in p.device or "ttyUSB" in p.device):
+            continue
+        name = p.product or p.description or ""
+        found.append({
+            "device": p.device,
+            "name": name,
+            "location": (p.location or "").split(":")[0],
+            "receiver": "receiver" in name.lower(),
+        })
+    return found
+
+def port_label(p):
+    return f"{p['device']}  {p['name']}" if p["name"] else p["device"]
+
+def read_mounts():
+    mounts = {}
+    try:
+        with open("/proc/mounts") as f:
+            for line in f:
+                dev, path = line.split()[:2]
+                mounts.setdefault(dev, path.replace("\\040", " "))
+    except Exception:
+        pass
+    return mounts
+
+# Kleine USB-Datentraeger mit ihrem Steckplatz (nur Linux)
+def find_usb_drives():
+    drives = {}
+    mounts = read_mounts()
+    for blk in glob.glob("/sys/block/sd*"):
+        real = os.path.realpath(blk)
+        if "/usb" not in real:
+            continue
+        try:
+            with open(os.path.join(blk, "size")) as f:
+                size = int(f.read()) * 512
+        except Exception:
+            continue
+        if size == 0 or size > 256 * 1024 * 1024:
+            continue
+        locs = re.findall(r"/(\d+-[\d.]+):\d+\.\d+/", real)
+        name = os.path.basename(blk)
+        devs = ["/dev/" + name] + ["/dev/" + os.path.basename(x) for x in glob.glob(os.path.join(blk, name + "*"))]
+        mount = next((mounts[d] for d in devs if d in mounts), None)
+        drives[name] = {"devs": devs, "location": locs[-1] if locs else "", "mount": mount}
+    return drives
+
+def mount_drive(drive):
+    if drive["mount"]:
+        return drive["mount"]
+    for dev in reversed(drive["devs"]):
+        subprocess.run(["udisksctl", "mount", "-b", dev, "--no-user-interaction"],
+                       capture_output=True, timeout=15)
+        mount = read_mounts().get(dev)
+        if mount:
+            return mount
+    return None
+
+multi_win = None
+
+def open_multiflash_window():
+    global multi_win
+    if not sys.platform.startswith("linux"):
+        append_text("Mehrere Tracker flashen gibt es nur unter Linux.\n", "error")
+        return
+    if multi_win is not None and multi_win.winfo_exists():
+        multi_win.focus()
+        return
+
+    win = ctk.CTkToplevel(app)
+    multi_win = win
+    win.title("Mehrere Tracker flashen")
+    win.geometry("700x600")
+    win.transient(app)
+
+    rows = []
+    label_to_port = {}
+    fw_mode = tk.StringVar(value="list")
+    custom_uf2 = {"path": None}
+    clear_var = tk.BooleanVar(value=False)
+    busy = {"on": False}
+
+    def ui(fn):
+        app.after(0, fn)
+
+    # Firmware
+    fw_frame = ctk.CTkFrame(win)
+    fw_frame.pack(fill="x", padx=10, pady=(10, 5))
+    ctk.CTkLabel(fw_frame, text="Firmware", font=ctk.CTkFont(weight="bold")).grid(row=0, column=0, sticky="w", padx=5, pady=(5, 0))
+    ctk.CTkRadioButton(fw_frame, text="Aus der Liste:", variable=fw_mode, value="list").grid(row=1, column=0, sticky="w", padx=5, pady=3)
+    ctk.CTkButton(fw_frame, textvariable=selected_firmware, command=open_firmware_popup, width=320).grid(row=1, column=1, sticky="w", padx=5, pady=3)
+    ctk.CTkRadioButton(fw_frame, text="Eigene .uf2:", variable=fw_mode, value="custom").grid(row=2, column=0, sticky="w", padx=5, pady=3)
+
+    def pick_uf2():
+        path = filedialog.askopenfilename(parent=win, title="UF2-Datei wählen", filetypes=[("UF2 files", "*.uf2")])
+        if path:
+            custom_uf2["path"] = path
+            fw_mode.set("custom")
+            custom_btn.configure(text=os.path.basename(path))
+
+    custom_btn = ctk.CTkButton(fw_frame, text="Datei wählen…", command=pick_uf2, width=320)
+    custom_btn.grid(row=2, column=1, sticky="w", padx=5, pady=3)
+    ctk.CTkCheckBox(fw_frame, text="Kopplungsdaten vorher löschen (danach neu koppeln)", variable=clear_var).grid(row=3, column=0, columnspan=2, sticky="w", padx=5, pady=(3, 8))
+
+    # Trackerliste
+    list_frame = ctk.CTkScrollableFrame(win, height=280)
+    list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+
+    def refresh_choices():
+        label_to_port.clear()
+        for p in list_tracker_ports():
+            lbl = port_label(p) + ("  (Empfänger)" if p["receiver"] else "")
+            label_to_port[lbl] = p
+        values = list(label_to_port.keys()) or ["Keine Ports gefunden"]
+        for r in rows:
+            r["menu"].configure(values=values)
+        return values
+
+    def set_status(r, text, color=None):
+        r["status"].configure(text=text, text_color=color or ctk.ThemeManager.theme["CTkLabel"]["text_color"])
+
+    def row_port(r):
+        return label_to_port.get(r["var"].get())
+
+    def close_row(r):
+        if r["ser"]:
+            try:
+                r["ser"].close()
+            except Exception:
+                pass
+        r["ser"] = None
+
+    def remove_row(r):
+        if busy["on"]:
+            return
+        close_row(r)
+        r["frame"].destroy()
+        rows.remove(r)
+
+    def add_row(label=None):
+        values = refresh_choices()
+        if label is None:
+            used = {r["var"].get() for r in rows}
+            free = [v for v in values if v not in used and v in label_to_port and not label_to_port[v]["receiver"]]
+            label = free[0] if free else "Kein Tracker gefunden"
+        frame = ctk.CTkFrame(list_frame)
+        frame.pack(fill="x", pady=2)
+        r = {"frame": frame, "var": tk.StringVar(value=label), "ser": None, "location": ""}
+        ctk.CTkLabel(frame, text=f"#{len(rows) + 1}", width=30).pack(side="left", padx=(5, 0))
+        r["menu"] = ctk.CTkOptionMenu(frame, values=values, variable=r["var"], width=330,
+                                      command=lambda _v, rr=r: (close_row(rr), set_status(rr, "")))
+        r["menu"].pack(side="left", padx=5, pady=4)
+        r["status"] = ctk.CTkLabel(frame, text="", anchor="w")
+        r["status"].pack(side="left", fill="x", expand=True, padx=5)
+        ctk.CTkButton(frame, text="−", width=28, command=lambda rr=r: remove_row(rr)).pack(side="right", padx=5)
+        rows.append(r)
+
+    def add_all_detected():
+        refresh_choices()
+        used = {r["var"].get() for r in rows}
+        for lbl, p in list(label_to_port.items()):
+            if not p["receiver"] and lbl not in used:
+                add_row(lbl)
+
+    def connect_all():
+        if busy["on"]:
+            return
+        refresh_choices()
+        asked = False
+        for r in rows:
+            close_row(r)
+            p = row_port(r)
+            if not p:
+                set_status(r, "kein Port", "red")
+                continue
+            for attempt in (1, 2):
+                try:
+                    r["ser"] = serial.Serial(p["device"], 115200, timeout=1)
+                    r["location"] = p["location"]
+                    set_status(r, "verbunden", "green")
+                    break
+                except serial.SerialException as e:
+                    if attempt == 1 and is_permission_error(e) and not asked:
+                        asked = True
+                        if fix_serial_permissions(win):
+                            continue
+                    set_status(r, "keine Berechtigung" if is_permission_error(e) else f"Fehler: {e}", "red")
+                    break
+
+    def flash_all():
+        if busy["on"]:
+            return
+        targets = [r for r in rows if r["ser"] and r["ser"].is_open]
+        if not targets:
+            info_label.configure(text="Erst „Alle verbinden“ drücken.", text_color="red")
+            return
+        if fw_mode.get() == "custom":
+            src = custom_uf2["path"]
+            if not src:
+                info_label.configure(text="Keine .uf2-Datei gewählt.", text_color="red")
+                return
+            is_url = False
+        else:
+            src = firmware_urls.get(selected_firmware.get())
+            if not src:
+                info_label.configure(text="Erst eine Firmware aus der Liste wählen.", text_color="red")
+                return
+            is_url = True
+        if not src.lower().endswith(".uf2"):
+            info_label.configure(text="Mehrfach-Flashen geht nur mit .uf2-Dateien.", text_color="red")
+            return
+        busy["on"] = True
+        for b in action_buttons:
+            b.configure(state="disabled")
+        threading.Thread(target=flash_worker, args=(targets, src, is_url, clear_var.get()), daemon=True).start()
+
+    def flash_worker(targets, src, is_url, clear):
+        try:
+            fw_path = src
+            if is_url:
+                ui(lambda: info_label.configure(text="Lade Firmware…", text_color="gray"))
+                fw_path = os.path.join(tempfile.gettempdir(), os.path.basename(src))
+                response = requests.get(src, stream=True, timeout=30)
+                response.raise_for_status()
+                with open(fw_path, "wb") as f:
+                    shutil.copyfileobj(response.raw, f)
+
+            before = set(find_usb_drives())
+            for r in targets:
+                try:
+                    if clear:
+                        r["ser"].write(b"clear\n")
+                        time.sleep(0.5)
+                    r["ser"].write(b"dfu\n")
+                    r["ser"].flush()
+                    ui(lambda rr=r: set_status(rr, "Bootloader…"))
+                except Exception as e:
+                    ui(lambda rr=r, e=e: set_status(rr, f"dfu fehlgeschlagen: {e}", "red"))
+                close_row(r)
+
+            ui(lambda: info_label.configure(text="Warte auf die UF2-Laufwerke…", text_color="gray"))
+            pending = {r["location"]: r for r in targets if r["location"]}
+            found = {}
+            deadline = time.time() + 30
+            while time.time() < deadline and len(found) < len(pending):
+                for name, d in find_usb_drives().items():
+                    if name in before or d["location"] in found or d["location"] not in pending:
+                        continue
+                    mount = mount_drive(d)
+                    if mount and os.path.isfile(os.path.join(mount, "INFO_UF2.TXT")):
+                        found[d["location"]] = mount
+                time.sleep(1)
+
+            def copy_one(r, mount):
+                try:
+                    dest = os.path.join(mount, os.path.basename(fw_path))
+                    with open(fw_path, "rb") as s, open(dest, "wb") as d:
+                        shutil.copyfileobj(s, d)
+                        d.flush()
+                        os.fsync(d.fileno())
+                except OSError:
+                    pass  # Der Bootloader startet oft schon waehrend des Schliessens neu
+                ui(lambda: set_status(r, "geschrieben, startet neu…"))
+
+            ui(lambda: info_label.configure(text="Schreibe Firmware…", text_color="gray"))
+            copies = []
+            for loc, r in pending.items():
+                if loc in found:
+                    t = threading.Thread(target=copy_one, args=(r, found[loc]), daemon=True)
+                    t.start()
+                    copies.append(t)
+                else:
+                    ui(lambda rr=r: set_status(rr, "kein UF2-Laufwerk gefunden", "red"))
+            for r in targets:
+                if not r["location"]:
+                    ui(lambda rr=r: set_status(rr, "USB-Steckplatz unbekannt", "red"))
+            for t in copies:
+                t.join()
+
+            # Erfolg = der Tracker meldet sich mit neuer Firmware wieder als Port
+            waiting = {loc: r for loc, r in pending.items() if loc in found}
+            deadline = time.time() + 30
+            while waiting and time.time() < deadline:
+                for p in list_tracker_ports():
+                    r = waiting.pop(p["location"], None)
+                    if r:
+                        ui(lambda rr=r, pp=p: (refresh_choices(), rr["var"].set(next((l for l, q in label_to_port.items() if q["device"] == pp["device"]), rr["var"].get())), set_status(rr, "fertig ✅", "green")))
+                time.sleep(1)
+            for r in waiting.values():
+                ui(lambda rr=r: set_status(rr, "geschrieben, aber nicht zurückgemeldet", "orange"))
+
+            ok = len(found) - len(waiting)
+            ui(lambda: info_label.configure(text=f"{ok} von {len(targets)} fertig.", text_color="green" if ok == len(targets) else "orange"))
+            ui(lambda: append_text(f"Mehrfach-Flash: {ok} von {len(targets)} Trackern mit {os.path.basename(fw_path)} geflasht.\n", "success"))
+        except Exception as e:
+            ui(lambda: info_label.configure(text=f"Fehler: {e}", text_color="red"))
+        finally:
+            busy["on"] = False
+            ui(lambda: [b.configure(state="normal") for b in action_buttons])
+
+    # Knoepfe
+    btn_frame = ctk.CTkFrame(win)
+    btn_frame.pack(fill="x", padx=10, pady=5)
+    b_add = ctk.CTkButton(btn_frame, text="+ Tracker", width=100, command=add_row)
+    b_add.pack(side="left", padx=5, pady=5)
+    b_all = ctk.CTkButton(btn_frame, text="Alle erkannten hinzufügen", command=add_all_detected)
+    b_all.pack(side="left", padx=5, pady=5)
+    b_flash = ctk.CTkButton(btn_frame, text="⬇ Alle flashen", command=flash_all, fg_color="green", hover_color="#006400")
+    b_flash.pack(side="right", padx=5, pady=5)
+    b_conn = ctk.CTkButton(btn_frame, text="Alle verbinden", command=connect_all)
+    b_conn.pack(side="right", padx=5, pady=5)
+    action_buttons = [b_add, b_all, b_flash, b_conn]
+    ToolTip(b_add, "Weiteren Tracker hinzufügen")
+    ToolTip(b_all, "Alle angesteckten Tracker übernehmen (ohne Empfänger)")
+    ToolTip(b_conn, "Alle Tracker in der Liste verbinden")
+    ToolTip(b_flash, "Alle verbundenen Tracker in den Bootloader schicken und die Firmware aufspielen")
+
+    info_label = ctk.CTkLabel(win, text="Tracker per USB anstecken, mit + hinzufügen, verbinden, flashen.", text_color="gray")
+    info_label.pack(fill="x", padx=10, pady=(0, 10))
+
+    def on_close():
+        if busy["on"]:
+            return
+        for r in rows:
+            close_row(r)
+        win.destroy()
+
+    win.protocol("WM_DELETE_WINDOW", on_close)
+    add_row()
+
 # Buttons!
 def start_firmware_download():
     threading.Thread(target=download_firmware, daemon=True).start()
@@ -777,6 +1153,10 @@ def start_firmware_download():
 btn_download_fw = ctk.CTkButton(top_frame, text="⬇ Firmware", width=80, command=start_firmware_download)
 btn_download_fw.pack(side="left", padx=5)
 ToolTip(btn_download_fw, "Upgrade your firmware!")
+
+btn_multi_fw = ctk.CTkButton(top_frame, text="⧉ Mehrere", width=80, command=open_multiflash_window)
+btn_multi_fw.pack(side="left", padx=5)
+ToolTip(btn_multi_fw, "Mehrere Tracker auf einmal flashen")
 
 status_label = ctk.CTkLabel(top_frame, text="Not connected", text_color="red")
 status_label.pack(side="left", padx=10)
