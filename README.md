@@ -138,7 +138,7 @@ License: MIT, see [LICENSE](LICENSE).
 
 ## A note on this project
 
-This code was created with Claude AI – and I know many people turn up their noses at those words. Still, this project stands for a simple idea: to be there for everyone, without exception. An AI is not a miracle cure that solves every problem by itself – it is a tool that only unfolds its power through the hands that guide it. And because there is no paid work behind it, only time I was happy to invest, this program will never cost anything. All files are open, freely accessible and free to use.
+This code was created with Claude AI – and I know many people turn up their noses at those words. Still, this project stands for a simple idea: to be there for everyone, without exception. An AI is not a miracle cure that solves every problem by itself – it is a tool that only unfolds its power through the hands that guide it. All files are open, freely accessible and free to use.
 
 I want to be honest here: this is AI-generated, and I do not claim to have written it myself. That honor isn't mine. The 3D printer once gave rise to hobby engineers who solved everyday problems they previously lacked the knowledge or means for. That is exactly what AI can – and should – be: not a miracle cure, but a tool that makes our lives easier. A tool that lets people without a computer science background tackle the small, annoying problems we all run into. Not out of a claim to genius, but out of the simple wish to make something better.
 
@@ -278,6 +278,6 @@ Lizenz: MIT, siehe [LICENSE](LICENSE).
 
 ## Eine Anmerkung zu diesem Projekt
 
-Dieser Code wurde mit Claude AI erschaffen – und ich weiß, viele rümpfen bei diesen Worten die Nase. Trotzdem steht dieses Projekt für einen einfachen Gedanken: für alle da zu sein, ohne Ausnahme. Eine KI ist kein Wundermittel, das jedes Problem von selbst löst – sie ist ein Werkzeug, das seine Kraft erst durch die Hände entfaltet, die es führen. Und weil dahinter keine bezahlte Arbeit steckt, sondern nur die Zeit, die ich gerne investiert habe, wird dieses Programm niemals etwas kosten. Alle Dateien liegen offen, für jeden frei zugänglich und frei verwendbar.
+Dieser Code wurde mit Claude AI erschaffen – und ich weiß, viele rümpfen bei diesen Worten die Nase. Trotzdem steht dieses Projekt für einen einfachen Gedanken: für alle da zu sein, ohne Ausnahme. Eine KI ist kein Wundermittel, das jedes Problem von selbst löst – sie ist ein Werkzeug, das seine Kraft erst durch die Hände entfaltet, die es führen. Alle Dateien liegen offen, für jeden frei zugänglich und frei verwendbar.
 
 Ich will an dieser Stelle ehrlich sein: Das hier ist KI-generiert, und ich beanspruche nicht, es selbst geschrieben zu haben. Diese Ehre gebührt mir nicht. Der 3D-Drucker hat einst Hobby-Ingenieure entstehen lassen, die damit Probleme des Alltags lösten, für die ihnen früher Wissen oder Mittel fehlten. Genau das kann – und sollte – auch KI sein: kein Wundermittel, sondern ein Werkzeug, das unser Leben einfacher macht. Ein Werkzeug, mit dem auch Menschen ohne Informatik-Hintergrund die kleinen, nervigen Probleme angehen können, die uns allen begegnen. Nicht aus Anspruch auf Genialität, sondern aus dem einfachen Wunsch, etwas besser zu machen.
