@@ -1,79 +1,147 @@
-# SmolSlimeConfigurator <img src="icon.png" width="32" height="32" alt="SmolSlimeConfiguratorICON">
-Pure Simple UI Configurator for SlimeVR Smol Slimes (Unofficial)
+# SmolSlime Configurator <img src="icon.png" width="32" height="32" alt="Icon">
 
-> **Diese Fassung (LucyWolf)** baut auf dem Original von [ICantMakeThings](https://github.com/ICantMakeThings/SmolSlimeConfigurator) auf und ergänzt vor allem für Linux:
->
-> - **Mehrere Geräte gleichzeitig** – Dongle und Tracker verbunden, jedes mit eigenem Terminal, links umschalten. Koppeln ohne das Programm zweimal zu öffnen; Dongle festlegen (verbindet sich von selbst).
-> - **DIY Firmware-Tool** – Assistent wie im SlimeVR-Server: Quelle → Board → Version → Bauweise → Geräte → Flashen. Mehrere Tracker auf einmal, Erklärung hinter jedem „?“, Firmware-Einstellungen (`write_config`) direkt nach dem Flashen.
-> - **USB-Rechte** – bei „Permission denied“ einmal per Passwortfenster einrichten.
-> - **Updater** – prüft beim Start auf ein neues Release und aktualisiert sich selbst.
->
-> **Installation:** aus den [Releases](https://github.com/LucyWolf/SmolSlimeConfigurator/releases)
-> - **Windows:** [`smolslime-setup.exe`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/smolslime-setup.exe) herunterladen und doppelklicken. Installiert ohne Admin-Rechte, legt Startmenü- und auf Wunsch Desktop-Eintrag an, deinstallierbar über „Apps“. Treiber braucht Windows 10/11 nicht. Ohne Installation geht weiter `SmolSlimeConfigurator-Windows.exe`. Mehrere Tracker werden unter Windows nacheinander geflasht.
-> - **Linux:** passenden Installer herunterladen und doppelklicken (der Dateimanager fragt beim ersten Mal, ob er die Datei ausführen darf): Arch/CachyOS/Manjaro [`smolslime-arch-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/smolslime-arch-installer.desktop), Debian/Ubuntu [`smolslime-deb-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/smolslime-deb-installer.desktop), alle anderen [`smolslime-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/smolslime-installer.desktop). Lädt die neueste Version, installiert fehlende Pakete (udisks2, XWayland), richtet die USB-Rechte ein (einmal Passwort) und legt einen Menüeintrag an. Erneut gestartet bietet er **Aktualisieren** oder **Deinstallieren** an. Läuft unter Wayland über XWayland.
->
-> Updates kommen danach über den Knopf **„⬆ Update“** in der App.
->
-> Neues Release: `APP_VERSION` erhöhen (letzte Stelle zählt bis 99), pushen, `tools/release.sh` – GitHub Actions baut Linux und Windows, testet beide und veröffentlicht. Stand: 02.10.2026
+Unofficial desktop app to connect, configure and flash **SlimeVR Smol Slime (SlimeNRF)** trackers and dongles.
 
+This is a fork of the [SmolSlime Configurator by ICantMakeThings](https://github.com/ICantMakeThings/SmolSlimeConfigurator). It keeps the original buttons and terminal and adds a firmware wizard, a device manager, multi-device support and installers for Linux and Windows.
 
-<img width="1316" height="539" alt="newyes" src="https://github.com/user-attachments/assets/ce07f8ac-0857-42c3-9a02-f86d84e19fcc" />
+The interface is in **English** by default and can be switched to **German** under *Settings → Language*.
 
-# Features
+![DIY Firmware Tool](docs/firmware-tool.png)
 
-- **Easy-to-use interface** — clean, modern, and simple to use & Helpful tooltips.
-- **Effortless configuration** — one-click buttons for calibration, pairing, and more.
-- **Automatic firmware updater** — just plug your tracker in via USB, select your firmware type, and flash the latest build instantly.
-- **Always up to date** — the firmware list automatically fetches the latest daily builds from GitHub.
-- **Custom firmware support** — flash your own `.uf2` or `.hex` files no problem.
-- **Favorites system** — star your most-used firmware versions by Right-Clicking (Middle-Clicking on Mac).
-- **Cross-platform** — available for **Windows**, **Linux**, **macOS**, and **Android**.
-- **Theme customization** — switch between **light/dark mode** and choose your favorite accent colour.
+## Installation
 
-# Download
-There are 2 options to run the Configurator:
-- Single-file executables are available from [Releases](https://github.com/ICantMakeThings/SmolSlimeConfigurator/releases) (Windows, Linux, macOS, Android).
-- Python file from the uploaded files above.
-- To build it from source, run:
+All files are on the [Releases](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest) page.
+
+### Windows
+
+Download [`SmolSlimeConfigurator-setup.exe`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/SmolSlimeConfigurator-setup.exe) and double-click it.
+
+- Installs for your user only, no admin rights needed
+- Adds a Start menu entry (desktop shortcut optional)
+- Can be uninstalled under *Settings → Apps*
+- No drivers needed on Windows 10/11
+
+If you don't want to install anything, you can run `SmolSlimeConfigurator-Windows.exe` directly.
+
+### Linux
+
+Download the installer for your distribution and double-click it. The first time, your file manager asks whether it may run the file.
+
+| Distribution | Installer |
+|---|---|
+| Arch / CachyOS / Manjaro | [`SmolSlimeConfigurator-arch-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/SmolSlimeConfigurator-arch-installer.desktop) |
+| Debian / Ubuntu | [`SmolSlimeConfigurator-deb-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/SmolSlimeConfigurator-deb-installer.desktop) |
+| Everything else (Fedora, openSUSE, …) | [`SmolSlimeConfigurator-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/SmolSlimeConfigurator-installer.desktop) |
+
+The installer:
+
+- downloads the latest version
+- installs missing packages (udisks2, XWayland)
+- sets up USB access for the trackers (asks for your password once)
+- adds a menu entry
+
+Running it again offers **Update** or **Uninstall**. On Wayland the app runs through XWayland.
+
+<details>
+<summary>Prefer the terminal?</summary>
+
 ```bash
-pyinstaller --onefile --windowed --icon=icon.png --add-data "icon.png:." --add-binary "/Location/To/UR/NameOfVenv/bin/nrfutil:." SmolSlimeConfiguratorV8.py
+curl -fsSL -o SmolSlimeConfigurator-installieren.sh https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/SmolSlimeConfigurator-installieren.sh
+bash SmolSlimeConfigurator-installieren.sh
 ```
-*Note you NEED to use a venv, NEED to use python 3.10.xx & change the .png to .icns on mac and .ico on windows*
+</details>
 
-# Instructions
-**Note:** There is a [video tutorial](https://youtu.be/2PHelwy7Rcs) explaining general usage, and [this video](https://www.youtube.com/watch?v=ENINHh4L8tk) covers **Android usage** in detail.
-## **First install**
+### Updates
 
-+ Plug in the tracker or reciever, hold one side of a wire on rst pin ![image](https://github.com/user-attachments/assets/7cdaae27-21f9-428f-9327-d39bbf8dabc2) (4th pin down from where B+ pin is)
-and doubble tap gnd (usbc connector on the Nice!Nano)![image](https://github.com/user-attachments/assets/c1efbc20-bb2f-4fd8-9ecd-8869648ebf17)
-+ Press "↻" refresh, then select the port from the dropdown menu on the left of the refresh button, then press "Connect"
-+ Select the version of hardware from the dropdown menu called "Select Firmware", press "⬇ Firmware",  Wait ~20 seconds, the tracker will flash.
+The app checks for a new version on start. If there is one, click **⬆ Update** in the top bar.
 
-## **Pairing**
-  
-+ Plug in your Reciever, press "↻" refresh and select the port And then press "Connect"
-+ To Configure your reciever, select the reciever tab, press pairing mode and power on each reciever one by one, you should notice ![image](https://github.com/user-attachments/assets/ab48dff0-e0f6-4113-a7f7-222260115964) the trackers being added, once all the trackers have been paired, press "Exit Pairing Mode"
+## Features
 
-## **Calibration**
+### DIY Firmware Tool
+A step-by-step wizard modeled on the SlimeVR Server: source → board → version → build → devices → flash method → flash.
 
-+ Plug in a tracker, Press "↻" refresh, select the COM port & "Connect", press "Calibrate 6 Sides", do what the terminal says.
-+ Then press "Calibrate", leave the tracker on a desk for 5~ seconds and done!
+- Firmware sources: **Shine-Bright-Meow** (official), **kounocom**, **jitingcn**, or your own `.uf2` file
+- Pick the build options (form factor, sensor bus, magnetometer, sensor clock, sleep mode, button, …); every option has a **?** with an explanation
+- If a combination doesn't exist, the tool suggests the closest ones or searches all sources
+- Flashes **several trackers at once** (one after another on Windows)
+- **UF2 bootloader** for trackers and ProMicro dongles, **Nordic serial bootloader** for `.hex` dongles (Holyiot, eByte, Nordic), without nRF Connect
+- Can reflash a ProMicro from tracker to dongle and back
+- Warns before flashing if the firmware doesn't match the connected device
+- Optional: write firmware settings into the trackers right after flashing
 
-**Note: You can also doubble tap the trackers button instead of pressing "Calibrate"**
+### Device Manager
+![Device Manager](docs/device-manager.png)
 
-## **Updating Firmware**
+- All dongles and trackers at a glance, with port and serial number
+- Firmware, board, sensor and battery via **Get info + battery**
+- List of trackers paired to the dongle
+- **Settings** stored directly in a tracker (sleep, sensor, button, radio, …) without reflashing
+- Remembers which firmware the app flashed onto each device and shows whether an **update** is available
 
-+ Connect to the port, select the firmware, press "⬇ Firmware" and wait ~20 seconds.
+### Main window
+- Several devices connected at the same time, each with its own terminal; switch on the left
+- SlimeNRF devices connect automatically; set one as **dongle** and it reconnects by itself
+- **🔗 Pair** puts the dongle and all connected trackers into pairing mode at once
+- The original buttons: Info, Reboot, Scan, Calibrate, Calibrate 6 Sides, Mag Clear, Battery, Pairing Mode, Clear Con. Data, DFU, Uptime, Debug
+- On Linux, a missing USB permission ("Permission denied") can be fixed with one password prompt
 
-**Note: Trackers and recievers need to be all updated on the same version or they wont want to pair**
+## Usage
 
-Official SmolSlime docs [Here](https://docs.slimevr.dev/smol-slimes/)
+### Flashing
+1. Plug in the trackers (or the dongle) via USB.
+2. Open **DIY Firmware Tool**, choose source, *Tracker* or *Dongle*, board and version.
+3. Pick the build options, select the devices and start flashing.
 
-# Odd notes:
+The app sends the devices into the bootloader by itself. For firmware without the `dfu` command, it asks you to press reset four times quickly. Holyiot dongles enter the bootloader by holding the included magnet to the LED; the app tells you when.
 
-+ If you want to feel safe running this program, read the Python code and run it from the .py.
-+ If a tracker has old pair data it wont connect to your reciever, plug your tracker in and "Clear Con. data".
-+ If the trackers and recievers arent on the same daily build, they will not want to connect.
-+ There is a [.html](https://github.com/jitingcn/SmolSlimeWebConfigurator) version of this app, and hosted on a [website](https://gh.jtcat.com/SmolSlimeConfigurator.html), made by [jitingcn](https://github.com/jitingcn).
-+ Looking for old source code? look [here](https://github.com/ICantMakeThings/SmolSlimeConfigurator/tree/OldVersions)
+A brand-new ProMicro without SlimeNRF firmware has to be put into the bootloader by hand once: bridge **RST** and **GND** twice quickly.
 
+**Trackers and dongle need the same firmware version**, otherwise they won't pair.
+
+### Pairing
+Connect the dongle and the trackers, then press **🔗 Pair** (main window) or **🔗 Pair all** (Device Manager). When all trackers show up, end pairing mode on the *Receiver* tab.
+
+If a tracker has old pairing data, it won't connect: plug it in and press **Clear Con. Data**.
+
+### Calibration
+Press **Calibrate 6 Sides** and follow the terminal. Then press **Calibrate** and leave the tracker still on a desk for about 5 seconds. Double-tapping the tracker's button works instead of **Calibrate**.
+
+More in the official [SmolSlime docs](https://docs.slimevr.dev/smol-slimes/).
+
+## Building from source
+
+Python **3.10**:
+
+```bash
+pip install pyinstaller customtkinter pyserial requests
+pyinstaller --onefile --windowed --add-data "icon.png:." --add-data "assets:assets" SmolSlimeConfiguratorV9.py
+```
+
+On Windows use `;` instead of `:` in `--add-data` and add `--icon=icon.ico`.
+
+**Releases (maintainers):** raise `APP_VERSION` in `SmolSlimeConfiguratorV9.py` (the last digit counts up to 99), push, run `tools/release.sh`. GitHub Actions builds and tests Linux and Windows (including the setup) and then publishes.
+
+## Credits
+
+- Original app: [ICantMakeThings/SmolSlimeConfigurator](https://github.com/ICantMakeThings/SmolSlimeConfigurator) (MIT). macOS and Android builds are available there.
+- Schematic images: [SlimeVR docs](https://github.com/SlimeVR/SlimeVR-Docs-Site) (MIT), see `assets/bauform/QUELLEN.md`.
+- Nordic serial DFU rebuilt in Python after Nordic's [pc-nrfutil](https://github.com/NordicSemiconductor/pc-nrfutil) (BSD).
+- Web version of the original: [SmolSlimeWebConfigurator](https://github.com/jitingcn/SmolSlimeWebConfigurator) by jitingcn.
+
+License: MIT, see [LICENSE](LICENSE).
+
+---
+
+## Eine Anmerkung zu diesem Projekt
+
+Dieser Code wurde mit Claude AI erschaffen – und ich weiß, viele rümpfen bei diesen Worten die Nase. Trotzdem steht dieses Projekt für einen einfachen Gedanken: für alle da zu sein, ohne Ausnahme. Eine KI ist kein Wundermittel, das jedes Problem von selbst löst – sie ist ein Werkzeug, das seine Kraft erst durch die Hände entfaltet, die es führen. Und weil dahinter keine bezahlte Arbeit steckt, sondern nur die Zeit, die ich gerne investiert habe, wird dieses Programm niemals etwas kosten. Alle Dateien liegen offen, für jeden frei zugänglich und frei verwendbar.
+
+Ich will an dieser Stelle ehrlich sein: Das hier ist KI-generiert, und ich beanspruche nicht, es selbst geschrieben zu haben. Diese Ehre gebührt mir nicht. Der 3D-Drucker hat einst Hobby-Ingenieure entstehen lassen, die damit Probleme des Alltags lösten, für die ihnen früher Wissen oder Mittel fehlten. Genau das kann – und sollte – auch KI sein: kein Wundermittel, sondern ein Werkzeug, das unser Leben einfacher macht. Ein Werkzeug, mit dem auch Menschen ohne Informatik-Hintergrund die kleinen, nervigen Probleme angehen können, die uns allen begegnen. Nicht aus Anspruch auf Genialität, sondern aus dem einfachen Wunsch, etwas besser zu machen.
+
+<details>
+<summary>A note on this project (English)</summary>
+
+This code was created with Claude AI – and I know many people turn up their noses at those words. Still, this project stands for a simple idea: to be there for everyone, without exception. An AI is not a miracle cure that solves every problem by itself – it is a tool that only unfolds its power through the hands that guide it. And because there is no paid work behind it, only time I was happy to invest, this program will never cost anything. All files are open, freely accessible and free to use.
+
+I want to be honest here: this is AI-generated, and I do not claim to have written it myself. That honor isn't mine. The 3D printer once gave rise to hobby engineers who solved everyday problems they previously lacked the knowledge or means for. That is exactly what AI can – and should – be: not a miracle cure, but a tool that makes our lives easier. A tool that lets people without a computer science background tackle the small, annoying problems we all run into. Not out of a claim to genius, but out of the simple wish to make something better.
+</details>

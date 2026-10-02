@@ -69,11 +69,11 @@ jobs:
         run: |
           choco install innosetup -y --no-progress
           $ver = "${{ inputs.tag }}".TrimStart("v")
-          iscc "/DMyAppVersion=$ver" windows\smolslime-setup.iss
+          iscc "/DMyAppVersion=$ver" windows\SmolSlimeConfigurator-setup.iss
       - name: Setup pruefen (still installieren und wieder entfernen)
         shell: pwsh
         run: |
-          $p = Start-Process -FilePath "dist\smolslime-setup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru -Wait
+          $p = Start-Process -FilePath "dist\SmolSlimeConfigurator-setup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru -Wait
           if ($p.ExitCode -ne 0) { throw "Setup: Exitcode $($p.ExitCode)" }
           $exe = "$env:LOCALAPPDATA\Programs\SmolSlime Configurator\SmolSlimeConfigurator.exe"
           if (-not (Test-Path $exe)) { throw "Setup: $exe fehlt" }
@@ -84,7 +84,7 @@ jobs:
           name: windows
           path: |
             dist/SmolSlimeConfigurator-Windows.exe
-            dist/smolslime-setup.exe
+            dist/SmolSlimeConfigurator-setup.exe
 
   publish:
     needs: [linux, windows]
