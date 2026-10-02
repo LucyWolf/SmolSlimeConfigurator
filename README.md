@@ -10,7 +10,7 @@ Pure Simple UI Configurator for SlimeVR Smol Slimes (Unofficial)
 >
 > **Installation:** aus den [Releases](https://github.com/LucyWolf/SmolSlimeConfigurator/releases)
 > - **Windows:** `SmolSlimeConfigurator-Windows.exe` herunterladen und starten. Mehrere Tracker werden dort nacheinander geflasht.
-> - **Linux:** [`SmolSlime-Installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/SmolSlime-Installer.desktop) herunterladen und doppelklicken (der Dateimanager fragt beim ersten Mal, ob er die Datei ausführen darf). Lädt die neueste Version, installiert fehlende Pakete (udisks2, XWayland), richtet die USB-Rechte ein (einmal Passwort) und legt einen Menüeintrag an. Erneut gestartet bietet er **Aktualisieren** oder **Deinstallieren** an. Läuft unter Wayland über XWayland.
+> - **Linux:** passenden Installer herunterladen und doppelklicken (der Dateimanager fragt beim ersten Mal, ob er die Datei ausführen darf): Arch/CachyOS/Manjaro [`smolslime-arch-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/smolslime-arch-installer.desktop), Debian/Ubuntu [`smolslime-deb-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/smolslime-deb-installer.desktop), alle anderen [`smolslime-installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/smolslime-installer.desktop). Lädt die neueste Version, installiert fehlende Pakete (udisks2, XWayland), richtet die USB-Rechte ein (einmal Passwort) und legt einen Menüeintrag an. Erneut gestartet bietet er **Aktualisieren** oder **Deinstallieren** an. Läuft unter Wayland über XWayland.
 >
 > Updates kommen danach über den Knopf **„⬆ Update“** in der App.
 >

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SmolSlime Configurator — Linux Installer
-# Per Doppelklick ausfuehrbar (oder ueber SmolSlime-Installer.desktop aus dem Netz geladen).
+# Per Doppelklick ausfuehrbar (oder ueber smolslime-*-installer.desktop aus dem Netz geladen).
 # Laedt bei Bedarf die neueste Programmdatei, installiert fehlende Pakete
 # (udisks2, XWayland), kopiert das Programm nach ~/.local/share,
 # legt einen Menueeintrag an und gibt dem angemeldeten Benutzer Zugriff auf
