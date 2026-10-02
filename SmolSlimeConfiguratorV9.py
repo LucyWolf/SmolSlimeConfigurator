@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.39"
+APP_VERSION = "1.0.40"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -332,16 +332,21 @@ def fix_serial_permissions(parent=None):
     ):
         return False
     # 1209 = SlimeNRF-Dongles/-Tracker, 1915 = Nordic-Bootloader der Holyiot-/eByte-/Nordic-Dongles
+    # Dieselbe Regel wie der Linux-Installer; hidraw braucht der SlimeVR-Server fuer den Dongle
     rules = ['SUBSYSTEM=="tty", ATTRS{idVendor}=="1209", TAG+="uaccess"',
+             'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", TAG+="uaccess"',
              'SUBSYSTEM=="tty", ATTRS{idVendor}=="1915", TAG+="uaccess"']
     script = (
         "printf '%s\\n' " + " ".join(f"'{r}'" for r in rules) + f" > {UDEV_RULE_PATH}"
         " && udevadm control --reload"
-        " && udevadm trigger --subsystem-match=tty --action=change"
+        " && udevadm trigger --subsystem-match=tty --subsystem-match=hidraw --action=change"
         " && udevadm settle --timeout=5"
     )
-    if subprocess.run(["getent", "group", "uucp"], capture_output=True).returncode == 0:
-        script += f" ; usermod -aG uucp {os.environ.get('USER', '')}"
+    # Rueckfallebene fuer das naechste Anmelden: Arch uucp, Debian/Ubuntu dialout
+    user = os.environ.get("USER", "")
+    for group in ("uucp", "dialout"):
+        if user and subprocess.run(["getent", "group", group], capture_output=True).returncode == 0:
+            script += f" ; usermod -aG {group} {user}"
     try:
         ok = subprocess.run(["pkexec", "/bin/sh", "-c", script]).returncode == 0
     except Exception:
@@ -362,6 +367,7 @@ class Device:
         self.product = info.product or info.description or ""
         self.usb_id = (info.vid, info.pid)
         self.ser = None
+        self.lock = threading.Lock()   # je Geraet: ein langsames Geraet haelt die anderen nicht auf
         self.stop = threading.Event()
         self.paused = False      # waehrend des Flashens nicht neu verbinden
         self.manual_off = False  # vom Benutzer getrennt
@@ -494,7 +500,7 @@ def disconnect_device(dev):
     dev.stop.set()
     try:
         if dev.ser:
-            with ser_lock:
+            with dev.lock:
                 dev.ser.close()
     except Exception:
         pass
@@ -640,7 +646,7 @@ def send_command(cmd, dev=None):
     dev = dev or active_device
     if dev and dev.connected:
         try:
-            with ser_lock:
+            with dev.lock:
                 dev.ser.write((cmd + "\n").encode())
             append_text(f">>> {cmd}\n", None, dev)
         except (serial.SerialException, OSError) as e:
@@ -649,19 +655,19 @@ def send_command(cmd, dev=None):
         append_text(T("Nicht verbunden.\n", "Not connected.\n"), "error", dev)
 
 def read_serial(dev):
-    s = dev.ser
-    while not dev.stop.is_set():
+    s, stop = dev.ser, dev.stop   # diese Verbindung; nach einem Neuverbinden gibt es neue
+    while not stop.is_set():
         try:
             if s.in_waiting:
-                with ser_lock:
+                with dev.lock:
                     line = s.readline().decode(errors="ignore").rstrip('\r\n \t')
                 if line:
-                    serial_queue.put((dev, line + "\n", None))
+                    serial_queue.put((dev, line + "\n", None, s))
             else:
                 time.sleep(0.01)
         except Exception as e:
-            if not dev.stop.is_set():
-                serial_queue.put((dev, None, T(f"Gerät getrennt: {e}\n", f"Device disconnected: {e}\n")))
+            if not stop.is_set():
+                serial_queue.put((dev, None, T(f"Gerät getrennt: {e}\n", f"Device disconnected: {e}\n"), s))
             break
 
 
@@ -1218,13 +1224,20 @@ def mount_drive(drive):
     if drive["mount"]:
         return drive["mount"]
     for dev in reversed(drive["devs"]):
-        res = subprocess.run(["udisksctl", "mount", "-b", dev, "--no-user-interaction"],
-                             capture_output=True, text=True, timeout=15)
-        mount = read_mounts().get(dev)
-        if not mount and "NotAuthorized" in (res.stderr or "") and dev not in mount_asked:
-            mount_asked.add(dev)
-            res = subprocess.run(["udisksctl", "mount", "-b", dev], capture_output=True, text=True, timeout=90)
+        try:
+            res = subprocess.run(["udisksctl", "mount", "-b", dev, "--no-user-interaction"],
+                                 capture_output=True, text=True, timeout=15)
             mount = read_mounts().get(dev)
+            if not mount and "NotAuthorized" in (res.stderr or "") and dev not in mount_asked:
+                mount_asked.add(dev)
+                res = subprocess.run(["udisksctl", "mount", "-b", dev], capture_output=True, text=True, timeout=90)
+                mount = read_mounts().get(dev)
+        except FileNotFoundError:
+            mount_errors[dev] = T("udisksctl fehlt (Paket udisks2)", "udisksctl missing (package udisks2)")
+            return None
+        except subprocess.TimeoutExpired:
+            mount_errors[dev] = T("Einhängen dauert zu lange", "mounting timed out")
+            continue
         if mount:
             mount_errors.pop(dev, None)
             return mount
@@ -1423,7 +1436,7 @@ FW_GREEN = "#2e9e5b"
 FW_DIM = ("gray35", "gray65")
 
 # Rueckfrage im Stil der App statt des grauen System-Dialogs von Tk. Gibt True bei "Ja" zurueck.
-def ask_yes_no(title, text, parent=None):
+def ask_yes_no(title, text, parent=None, default="yes"):
     parent = parent or app
     result = {"ok": False}
     w = ctk.CTkToplevel(parent)
@@ -1446,7 +1459,8 @@ def ask_yes_no(title, text, parent=None):
     ctk.CTkButton(row, text=T("Abbrechen", "Cancel"), width=110, fg_color=FW_SLATE,
                   command=lambda: close(False)).pack(side="right", padx=(0, 8))
     w.protocol("WM_DELETE_WINDOW", lambda: close(False))
-    w.bind("<Return>", lambda e: close(True))
+    # Bei Warnungen (default="no") bricht Enter ab, damit niemand aus Versehen bestaetigt
+    w.bind("<Return>", lambda e: close(default != "no"))
     w.bind("<Escape>", lambda e: close(False))
     # mittig ueber dem aufrufenden Fenster
     w.update_idletasks()
@@ -1691,6 +1705,7 @@ def open_multiflash_window(role=None):
 
     win = ctk.CTkToplevel(app, fg_color=FW_BG)
     multi_win = win
+    win.is_busy = lambda: st["busy"]   # fuer die Geraeteverwaltung: waehrend des Flashens nicht schliessen
     win.title(T("DIY Firmware-Tool", "DIY Firmware Tool"))
     win.geometry("880x780")
     win.transient(app)
@@ -2609,6 +2624,7 @@ def open_multiflash_window(role=None):
                 fw_path = os.path.join(tempfile.gettempdir(), asset["name"])
                 response = requests.get(asset["url"], stream=True, timeout=30)
                 response.raise_for_status()
+                response.raw.decode_content = True   # falls der Server gepackt ausliefert
                 with open(fw_path, "wb") as f:
                     shutil.copyfileobj(response.raw, f)
 
@@ -2618,7 +2634,7 @@ def open_multiflash_window(role=None):
                 replies = []
                 dev.listeners.append(replies.append)
                 try:
-                    with ser_lock:
+                    with dev.lock:
                         if clear and not dev.is_receiver:  # beim Dongle wuerde clear alle Kopplungen loeschen
                             dev.ser.write(b"clear\n")
                             time.sleep(0.5)
@@ -2981,7 +2997,7 @@ class NordicDfu:
         if size is not None and resp and resp[2:3] == b"\x01" and len(resp) - 3 != size:
             raise NordicDfuError(T(f"unerwartete Antwort auf Befehl 0x{payload[0]:02X} – liest ein anderes Programm "
                                  "am Anschluss mit?", f"unexpected reply to command 0x{payload[0]:02X} – is another program reading the port?"))
-        if not resp or resp[0] != 0x60 or resp[1] != payload[0]:
+        if not resp or len(resp) < 3 or resp[0] != 0x60 or resp[1] != payload[0] or (resp[2] == 0x0B and len(resp) < 4):
             raise NordicDfuError(T(f"keine passende Antwort auf Befehl 0x{payload[0]:02X}", f"no matching reply to command 0x{payload[0]:02X}"))
         if resp[2] == 0x0B:
             raise NordicDfuError(NORDIC_EXT.get(resp[3], T(f"erweiterter Fehler 0x{resp[3]:02X}", f"extended error 0x{resp[3]:02X}")), resp[3])
@@ -2996,6 +3012,8 @@ class NordicDfu:
         self.ser.reset_input_buffer()
         self._cmd(bytes([0x02]) + struct.pack("<H", 0))            # PRN aus
         self.mtu = struct.unpack("<H", self._cmd(bytes([0x07]), size=2))[0]
+        if self.mtu < 8:
+            raise NordicDfuError(T(f"Bootloader meldet ungültige MTU {self.mtu}", f"bootloader reports invalid MTU {self.mtu}"))
 
     def _stream(self, data, crc, offset):
         chunk = (self.mtu - 1) // 2 - 1
@@ -3017,6 +3035,8 @@ class NordicDfu:
         self._stream(init_packet, 0, 0)
         self._cmd(bytes([0x04]))                                       # Init-Paket pruefen lassen
         max_size = struct.unpack("<III", self._cmd(bytes([0x06, 0x02]), size=12))[0]
+        if max_size == 0:
+            raise NordicDfuError(T("Bootloader meldet Blockgröße 0", "bootloader reports block size 0"))
         crc = 0
         for i in range(0, len(app_bin), max_size):
             obj = app_bin[i:i + max_size]
@@ -3089,7 +3109,7 @@ def parse_info(lines):
         m = re.match(r"^(SlimeVR-\S+)\s+(\S+)", line)
         if m:
             d["fw"] = f"{m.group(1)} {m.group(2)}"
-        for key, label in (("board", "Board"), ("imu", "IMU"), (T("gekoppelt", "paired"), "Tracker ID")):
+        for key, label in (("board", "Board"), ("imu", "IMU"), ("paired", "Tracker ID")):
             if line.startswith(label + ": "):
                 d[key] = line[len(label) + 2:]
         m = re.match(r"^Battery: ([\d.]+)%", line)
@@ -3155,7 +3175,8 @@ def open_device_manager():
         def wait():
             for t in threads:
                 t.join()
-            app.after(0, lambda: (say(T(f"Info von {len(targets)} Gerät(en) aktualisiert.", f"Info of {len(targets)} device(s) updated.")), render(force=True)))
+            app.after(0, lambda: (say(T(f"Info von {len(targets)} Gerät(en) aktualisiert.", f"Info of {len(targets)} device(s) updated.")), render(force=True))
+                      if win.winfo_exists() else None)
         threading.Thread(target=wait, daemon=True).start()
 
     def show_paired():
@@ -3168,7 +3189,8 @@ def open_device_manager():
 
         def work():
             lines = [l for l in query_device(dongle, ["list"]) if l and not l.startswith(">>>") and not l.startswith("[")]
-            app.after(0, lambda: show_lines(T("Gekoppelte Tracker", "Paired trackers"), lines or [T("Keine Antwort vom Dongle.", "No reply from the dongle.")]))
+            app.after(0, lambda: show_lines(T("Gekoppelte Tracker", "Paired trackers"), lines or [T("Keine Antwort vom Dongle.", "No reply from the dongle.")])
+                      if win.winfo_exists() else None)
         threading.Thread(target=work, daemon=True).start()
 
     def show_lines(title, lines):
@@ -3225,8 +3247,8 @@ def open_device_manager():
             for key, label in (("fw", "Firmware"), ("board", "Board"), ("imu", "Sensor"), ("battery", T("Akku", "Battery"))):
                 if d.get(key):
                     facts.append(f"{label}: {d[key]}")
-            if T("gekoppelt", "paired") in d and not dev.is_receiver:
-                facts.append(T("gekoppelt", "paired") if d[T("gekoppelt", "paired")] != "None" else T("nicht gekoppelt", "not paired"))
+            if "paired" in d and not dev.is_receiver:
+                facts.append(T("gekoppelt", "paired") if d["paired"] != "None" else T("nicht gekoppelt", "not paired"))
             ctk.CTkLabel(card, text="   ·   ".join(facts), text_color=FW_DIM, anchor="w", justify="left",
                          wraplength=900).pack(fill="x", padx=12, pady=(2, 6))
 
@@ -3301,6 +3323,9 @@ def open_device_manager():
 
     def open_update(fl):
         if multi_win is not None and multi_win.winfo_exists():
+            if getattr(multi_win, "is_busy", lambda: False)():
+                multi_win.focus()   # es wird gerade geflasht: nichts abbrechen
+                return
             multi_win.destroy()   # mit der Auswahl dieses Geraets neu oeffnen
         settings.setdefault("fw_last", {})[fl["role"]] = {"source": fl["source"], "board": fl["board"],
                                                         "options": fl["options"]}
@@ -3347,7 +3372,7 @@ def open_device_settings(dev, parent):
                     values[m.group(1)] = int(m.group(2))
                 elif line.startswith("Target: "):
                     current["__target__"] = line[len("Target: "):]
-            app.after(0, lambda: build(values, done_msg))
+            app.after(0, lambda: build(values, done_msg) if w.winfo_exists() else None)
         threading.Thread(target=work, daemon=True).start()
 
     def build(values, done_msg=None):
@@ -3397,9 +3422,9 @@ def open_device_settings(dev, parent):
                     wdg.pack(side="left")
                     ctk.CTkLabel(cell, text=unit, text_color=FW_DIM).pack(side="left", padx=6)
                 else:
-                    rgb = [round(values[f"led_default_color_{c}"] * 255 / 10000) for c in "rgb"]
-                    wdg = {"rgb": rgb}
-                    hexc = "#%02x%02x%02x" % tuple(rgb)
+                    col = [round(values[f"led_default_color_{c}"] * 255 / 10000) for c in "rgb"]
+                    wdg = {"rgb": col}
+                    hexc = "#%02x%02x%02x" % tuple(col)
                     sw = ctk.CTkButton(cell, text=hexc, width=130, fg_color=hexc)
 
                     def pick(wdg=wdg, sw=sw):
@@ -3455,7 +3480,8 @@ def open_device_settings(dev, parent):
             lines = query_device(dev, cmds, wait=1.5)
             ok = sum(1 for l in lines if "Updated config" in l)
             color = "green" if ok == len(cmds) else "orange"
-            app.after(0, lambda: read((T(f"{ok} von {len(cmds)} Einstellung(en) übernommen.", f"{ok} of {len(cmds)} setting(s) applied."), color)))
+            app.after(0, lambda: read((T(f"{ok} von {len(cmds)} Einstellung(en) übernommen.", f"{ok} of {len(cmds)} setting(s) applied."), color))
+                      if w.winfo_exists() else None)
         threading.Thread(target=work, daemon=True).start()
 
     def reset_all():
@@ -3464,7 +3490,7 @@ def open_device_settings(dev, parent):
 
         def work():
             query_device(dev, ["reset_config all"], wait=1.0)
-            app.after(0, read)
+            app.after(0, lambda: read() if w.winfo_exists() else None)
         threading.Thread(target=work, daemon=True).start()
 
     ctk.CTkButton(bar, text=T("Neu einlesen", "Reload"), command=read).pack(side="left", padx=4)
@@ -3785,9 +3811,11 @@ def install_update():
             new = exe + ".neu"
             response = requests.get(asset["browser_download_url"], stream=True, timeout=60)
             response.raise_for_status()
+            response.raw.decode_content = True   # gepackte Uebertragung entpacken, nie gepackt speichern
             with open(new, "wb") as f:
                 shutil.copyfileobj(response.raw, f)
-            expected = int(response.headers.get("Content-Length") or 0)
+            # Content-Length zaehlt bei gepackter Uebertragung die gepackten Bytes
+            expected = 0 if response.headers.get("Content-Encoding") else int(response.headers.get("Content-Length") or 0)
             if os.path.getsize(new) < 1_000_000 or (expected and os.path.getsize(new) != expected):
                 raise RuntimeError(T("Download unvollständig", "Download incomplete"))
             os.chmod(new, 0o755)
@@ -3797,7 +3825,13 @@ def install_update():
                 if os.path.exists(old):
                     os.remove(old)
                 os.rename(exe, old)
-            os.replace(new, exe)  # Linux erlaubt das Ersetzen der laufenden Datei direkt
+                try:
+                    os.replace(new, exe)
+                except OSError:
+                    os.rename(old, exe)   # zurueck, sonst fehlt die Programmdatei ganz
+                    raise
+            else:
+                os.replace(new, exe)  # Linux erlaubt das Ersetzen der laufenden Datei direkt
         except Exception as e:
             app.after(0, lambda e=e: (append_text(T(f"Update fehlgeschlagen: {e}\n", f"Update failed: {e}\n"), "error"),
                                       btn_update.configure(state="normal", text=f"⬆ Update {tag}")))
@@ -3901,15 +3935,24 @@ elif sys.platform.startswith("linux") or sys.platform.startswith("darwin"):
 
 
 def flush_serial_queue():
-    while not serial_queue.empty():
-        dev, line, lost = serial_queue.get()
-        if line is not None:
-            append_text(line, None, dev)
-            for listener in list(dev.listeners):
-                listener(line)
-        else:
-            device_lost(dev, lost)
-    app.after(50, flush_serial_queue)
+    # Ein Fehler bei einer Zeile (z.B. Geraet gerade entfernt) darf die Schleife nicht beenden,
+    # sonst zeigt kein Terminal mehr etwas an
+    try:
+        while not serial_queue.empty():
+            dev, line, lost, s = serial_queue.get()
+            try:
+                if dev not in devices:
+                    continue
+                if line is not None:
+                    append_text(line, None, dev)
+                    for listener in list(dev.listeners):
+                        listener(line)
+                elif dev.ser is s:   # alte Verbindung meldet sich ab: eine neue nicht trennen
+                    device_lost(dev, lost)
+            except Exception as e:
+                print(f"serial queue: {e}", flush=True)
+    finally:
+        app.after(50, flush_serial_queue)
 
 app.after(50, flush_serial_queue)
 app.after(500, watch_devices)

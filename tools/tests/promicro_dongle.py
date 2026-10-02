@@ -2,9 +2,13 @@
 exec(open("/src/tools/tests/fake_devices.py").read())
 serial.tools.list_ports.comports = lambda: [FAKE_TRACKER]
 settings["fw_last"] = {"tracker": {"source": "main"}}
-import tkinter.messagebox as _mb
 asked = []
-_mb.askyesno = lambda title, msg, **k: (asked.append(msg), False)[1]   # Sicherung: "Nein"
+_real_ask = ask_yes_no
+def ask_yes_no(title, msg, **k):   # Sicherung: Aufruf wie in der App pruefen, dann "Nein"
+    import inspect
+    inspect.signature(_real_ask).bind(title, msg, **k)   # wirft, wenn das echte Fenster den Aufruf nicht kennt
+    asked.append((msg, k.get("default")))
+    return False
 
 def to_dongle():
     seg = next(c for win in _windows() for c in _walk(win) if isinstance(c, ctk.CTkSegmentedButton) and c.winfo_ismapped())
@@ -37,5 +41,5 @@ at(24500, lambda: print("Schritt 3:", status(), flush=True))
 at(25000, lambda: click("Nächster Schritt"))
 at(25500, lambda: click("Weiter zum Flashen"))
 at(26500, lambda: click("⬇ Flashen starten"))
-at(29500, lambda: print("Sicherung gefragt:", bool(asked), "|", status(), flush=True))
+at(29500, lambda: print("Sicherung gefragt:", bool(asked), "| Enter = Abbrechen:", bool(asked) and asked[0][1] == "no", "|", status(), flush=True))
 at(30000, done)
