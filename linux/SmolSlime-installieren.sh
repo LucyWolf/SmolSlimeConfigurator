@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SmolSlime Configurator — Linux Installer
-# Per Doppelklick ausfuehrbar. Kopiert das Programm nach ~/.local/share,
+# Per Doppelklick ausfuehrbar (oder ueber SmolSlime-Installer.desktop aus dem Netz geladen).
+# Laedt bei Bedarf die neueste Programmdatei, installiert fehlende Pakete
+# (udisks2, XWayland), kopiert das Programm nach ~/.local/share,
 # legt einen Menueeintrag an und gibt dem angemeldeten Benutzer Zugriff auf
 # die seriellen SlimeNRF-Geraete (sonst: "Permission denied: /dev/ttyACM0").
 # Ist er schon installiert, fragt das Skript: aktualisieren oder deinstallieren.
@@ -11,7 +13,9 @@ INSTALL_DIR="$HOME/.local/share/smolslime-configurator"
 DESKTOP_DIR="$HOME/.local/share/applications"
 ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
 RULE_FILE="/etc/udev/rules.d/70-smolslime.rules"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Ueber die Leitung gestartet (curl | bash) gibt es keinen Skriptordner
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$PWD/x}")" && pwd)"
+RELEASE_URL="https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download"
 
 GUI=0
 if command -v kdialog >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
@@ -73,9 +77,22 @@ if [ -x "$INSTALL_DIR/SmolSlimeConfigurator" ]; then
     esac
 fi
 
-# Neueste Programmdatei neben dem Installer
-BIN_SRC="$(ls -t "$SCRIPT_DIR"/SmolSlimeConfigurator*-Linux 2>/dev/null | head -1 || true)"
-[ -n "$BIN_SRC" ] || fail "Keine Datei SmolSlimeConfigurator…-Linux in\n$SCRIPT_DIR gefunden."
+# Programmdatei: neben dem Installer, sonst die neueste aus dem Release laden
+BIN_SRC=""
+[ -n "${SMOLSLIME_FROM_WEB:-}" ] || BIN_SRC="$(ls -t "$SCRIPT_DIR"/SmolSlimeConfigurator*-Linux 2>/dev/null | head -1 || true)"
+if [ -z "$BIN_SRC" ]; then
+    command -v curl >/dev/null 2>&1 || fail "curl fehlt – damit wird die Programmdatei geladen."
+    TMP_BIN="$(mktemp)"
+    trap 'rm -f "$TMP_BIN"' EXIT
+    case "$GUI" in
+        1) kdialog --title "$TITLE" --passivepopup "Lade die neueste Version herunter …" 8 & ;;
+        2) zenity --notification --text="SmolSlime Configurator: Lade die neueste Version herunter …" & ;;
+        *) echo "Lade die neueste Version herunter …" ;;
+    esac
+    curl -fL --retry 2 -o "$TMP_BIN" "$RELEASE_URL/SmolSlimeConfigurator-Linux" 2>/dev/null \
+        || fail "Download fehlgeschlagen.\nBesteht eine Internetverbindung?"
+    BIN_SRC="$TMP_BIN"
+fi
 
 # 0) Treiber pruefen. Ohne cdc_acm erscheinen Dongle und Tracker nie als
 #    /dev/ttyACM*. Fehlt der Modulordner des laufenden Kernels, wurde der
@@ -94,7 +111,24 @@ WARN=""
 for m in ch341 cp210x; do
     has_module "$m" || WARN="$WARN\n- Treiber $m fehlt (nur fuer ESP-Boards mit diesem USB-Chip noetig)"
 done
-command -v udisksctl >/dev/null 2>&1 || WARN="$WARN\n- udisksctl fehlt (Paket udisks2), Mehrfach-Flash findet die Laufwerke dann evtl. nicht"
+# Fehlende Pakete gleich mit der Rechte-Abfrage nachinstallieren (ein Passwort fuer alles)
+PKGS_ARCH=""; PKGS_DEB=""; PKGS_RPM=""; PKGS_SUSE=""
+if ! command -v udisksctl >/dev/null 2>&1; then
+    PKGS_ARCH="$PKGS_ARCH udisks2"; PKGS_DEB="$PKGS_DEB udisks2"; PKGS_RPM="$PKGS_RPM udisks2"; PKGS_SUSE="$PKGS_SUSE udisks2"
+fi
+if [ -n "${WAYLAND_DISPLAY:-}" ] && ! command -v Xwayland >/dev/null 2>&1; then
+    PKGS_ARCH="$PKGS_ARCH xorg-xwayland"; PKGS_DEB="$PKGS_DEB xwayland"
+    PKGS_RPM="$PKGS_RPM xorg-x11-server-Xwayland"; PKGS_SUSE="$PKGS_SUSE xwayland"
+fi
+PKG_CMD=""
+if [ -n "$PKGS_ARCH" ]; then
+    if command -v pacman >/dev/null 2>&1; then PKG_CMD="pacman -S --needed --noconfirm$PKGS_ARCH"
+    elif command -v apt-get >/dev/null 2>&1; then PKG_CMD="DEBIAN_FRONTEND=noninteractive apt-get install -y$PKGS_DEB"
+    elif command -v dnf >/dev/null 2>&1; then PKG_CMD="dnf install -y$PKGS_RPM"
+    elif command -v zypper >/dev/null 2>&1; then PKG_CMD="zypper --non-interactive install$PKGS_SUSE"
+    else WARN="$WARN\n- Fehlende Pakete bitte von Hand installieren:$PKGS_ARCH"
+    fi
+fi
 if [ ! -d "/usr/lib/modules/$KVER" ] && [ ! -d "/lib/modules/$KVER" ]; then
     WARN="$WARN\n- Kernel wurde aktualisiert, aber noch nicht neu gestartet. Neue USB-Geraete brauchen evtl. einen Neustart"
 fi
@@ -139,7 +173,7 @@ SERIAL_GROUP=""
 getent group uucp >/dev/null && SERIAL_GROUP=uucp
 getent group dialout >/dev/null && SERIAL_GROUP=dialout
 
-if [ -f "$RULE_FILE" ] && grep -q 1915 "$RULE_FILE" && { [ -z "$SERIAL_GROUP" ] || id -nG | tr ' ' '\n' | grep -qx "$SERIAL_GROUP"; }; then
+if [ -z "$PKG_CMD" ] && [ -f "$RULE_FILE" ] && grep -q 1915 "$RULE_FILE" && { [ -z "$SERIAL_GROUP" ] || id -nG | tr ' ' '\n' | grep -qx "$SERIAL_GROUP"; }; then
     : # schon eingerichtet, kein Passwort noetig
 else
     ROOT_CMD="
@@ -153,6 +187,7 @@ RULE
 udevadm control --reload
 udevadm trigger --subsystem-match=tty --subsystem-match=hidraw
 ${SERIAL_GROUP:+usermod -aG $SERIAL_GROUP '$USER'}
+${PKG_CMD:+$PKG_CMD || echo 'Pakete nicht installiert' >&2}
 "
     as_root "$ROOT_CMD" || fail "Rechte wurden nicht vergeben (Passwort abgebrochen?).\nDas Programm ist installiert, findet den Empfaenger aber nicht."
 fi

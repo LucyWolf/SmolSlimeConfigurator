@@ -10,11 +10,11 @@ Pure Simple UI Configurator for SlimeVR Smol Slimes (Unofficial)
 >
 > **Installation:** aus den [Releases](https://github.com/LucyWolf/SmolSlimeConfigurator/releases)
 > - **Windows:** `SmolSlimeConfigurator-Windows.exe` herunterladen und starten. Mehrere Tracker werden dort nacheinander geflasht.
-> - **Linux:** `SmolSlimeConfigurator-Linux`, `SmolSlime-installieren.sh` und `icon.png` in denselben Ordner laden, dann `SmolSlime-installieren.sh` doppelklicken. Prüft die Treiber, richtet die USB-Rechte ein und legt einen Menüeintrag an. Erneut gestartet bietet es **Aktualisieren** oder **Deinstallieren** an. Läuft unter Wayland über XWayland.
+> - **Linux:** [`SmolSlime-Installer.desktop`](https://github.com/LucyWolf/SmolSlimeConfigurator/releases/latest/download/SmolSlime-Installer.desktop) herunterladen und doppelklicken (der Dateimanager fragt beim ersten Mal, ob er die Datei ausführen darf). Lädt die neueste Version, installiert fehlende Pakete (udisks2, XWayland), richtet die USB-Rechte ein (einmal Passwort) und legt einen Menüeintrag an. Erneut gestartet bietet er **Aktualisieren** oder **Deinstallieren** an. Läuft unter Wayland über XWayland.
 >
 > Updates kommen danach über den Knopf **„⬆ Update“** in der App.
 >
-> Neues Release: `APP_VERSION` erhöhen (letzte Stelle zählt bis 99), pushen, `tools/release.sh` – GitHub Actions baut Linux und Windows, testet beide und veröffentlicht. Stand: 01.10.2026
+> Neues Release: `APP_VERSION` erhöhen (letzte Stelle zählt bis 99), pushen, `tools/release.sh` – GitHub Actions baut Linux und Windows, testet beide und veröffentlicht. Stand: 02.10.2026
 
 
 <img width="1316" height="539" alt="newyes" src="https://github.com/user-attachments/assets/ce07f8ac-0857-42c3-9a02-f86d84e19fcc" />
