@@ -22,7 +22,7 @@ NOTES=$(if [ -n "$PREV" ]; then git log --format='- %s' "$PREV"..HEAD; else echo
 
 git tag "v$VER"
 git push -q origin "v$VER"
-gh release create "v$VER" linux/SmolSlime-installieren.sh icon.png --repo "$REPO" --draft --verify-tag \
+gh release create "v$VER" linux/SmolSlime-installieren.sh --repo "$REPO" --draft --verify-tag \
     --title "v$VER" --notes "$NOTES"
 gh workflow run release.yml --repo "$REPO" -f tag="v$VER"
 sleep 8

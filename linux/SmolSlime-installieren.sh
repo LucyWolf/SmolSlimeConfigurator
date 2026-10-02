@@ -108,11 +108,16 @@ chmod +x "$INSTALL_DIR/SmolSlimeConfigurator"
 #    (auch unter Wayland) das Fenster dem Eintrag und seinem Icon zuordnen.
 mkdir -p "$DESKTOP_DIR"
 ICON=input-gaming
+mkdir -p "$ICON_DIR"
 if [ -f "$SCRIPT_DIR/icon.png" ]; then
-    mkdir -p "$ICON_DIR"
     cp -f "$SCRIPT_DIR/icon.png" "$ICON_DIR/smolslime-configurator.png"
-    ICON=smolslime-configurator
+else
+    # Das Release enthaelt kein Icon mehr: aus dem Repo holen
+    curl -fsSL -o "$ICON_DIR/smolslime-configurator.png" \
+        "https://raw.githubusercontent.com/LucyWolf/SmolSlimeConfigurator/main/icon.png" 2>/dev/null \
+        || rm -f "$ICON_DIR/smolslime-configurator.png"
 fi
+[ -f "$ICON_DIR/smolslime-configurator.png" ] && ICON=smolslime-configurator
 cat > "$DESKTOP_DIR/smolslime-configurator.desktop" << DESKTOP
 [Desktop Entry]
 Type=Application
