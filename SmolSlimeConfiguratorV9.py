@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.36"
+APP_VERSION = "1.0.37"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -66,7 +66,8 @@ default_settings = {
     "favorites": ["Custom (User provided .uf2 / .hex)"],
     "seen_favorite_hint": False,
     "firmware_source": "main", 
-    "custom_firmware_repo": ""
+    "custom_firmware_repo": "",
+    "lang": "en",
 }
 
 settings = default_settings.copy()
@@ -166,7 +167,14 @@ if settings.get("theme_version", 0) < 1:
     settings["theme_version"] = 1
     save_settings()
 ctk.set_appearance_mode(settings["theme"])
-apply_accent(settings["accent"])
+# Akzentfarbe ist nicht mehr waehlbar: andere Schemata (z.B. "green") faerbten die Auswahlmenues ein
+apply_accent("slimevr")
+
+# Sprache der Oberflaeche: Englisch, umstellbar auf Deutsch (wirkt nach Neustart, damit nichts halb umgestellt ist)
+LANG = "de" if settings.get("lang") == "de" else "en"
+
+def T(de, en):
+    return de if LANG == "de" else en
 
 if sys.platform.startswith("linux"):
     set_linux_scaling()
@@ -221,8 +229,9 @@ try:
     app = ctk.CTk(className="smolslime-configurator")
 except tk.TclError:
     if sys.platform.startswith("linux") and os.environ.get("WAYLAND_DISPLAY") and not os.environ.get("DISPLAY"):
-        msg = ("SmolSlime Configurator braucht XWayland (die X11-Ebene von Wayland).\n"
-               "Bitte XWayland installieren bzw. in der Sitzung aktivieren.")
+        msg = (T("SmolSlime Configurator braucht XWayland (die X11-Ebene von Wayland).\n"
+               "Bitte XWayland installieren bzw. in der Sitzung aktivieren.", "SmolSlime Configurator needs XWayland (the X11 layer of Wayland).\nPlease install XWayland"
+            " or enable it in your session."))
         print(msg, file=sys.stderr)
         for cmd in (["kdialog", "--error", msg], ["zenity", "--error", f"--text={msg}"], ["notify-send", msg]):
             if shutil.which(cmd[0]):
@@ -300,8 +309,8 @@ def refresh_ports():
         port_option.configure(values=ports)
         port_option.set(ports[0])
     else:
-        port_option.configure(values=["No ports found"])
-        port_option.set("No ports found")
+        port_option.configure(values=[T("Keine Ports gefunden", "No ports found")])
+        port_option.set(T("Keine Ports gefunden", "No ports found"))
 
 # Linux sperrt /dev/ttyACM* fuer normale Benutzer (Arch: Gruppe uucp). Statt
 # "Permission denied" einmal per Passwortfenster eine udev-Regel setzen, die
@@ -316,9 +325,10 @@ def fix_serial_permissions(parent=None):
         return False
     from tkinter import messagebox
     if not messagebox.askyesno(
-        "Keine Berechtigung",
-        "Linux erlaubt den Zugriff auf den USB-Anschluss nicht.\n\n"
-        "Jetzt einmalig einrichten? Danach fragt ein Fenster nach deinem Passwort.",
+        T("Keine Berechtigung", "No permission"),
+        T("Linux erlaubt den Zugriff auf den USB-Anschluss nicht.\n\n"
+        "Jetzt einmalig einrichten? Danach fragt ein Fenster nach deinem Passwort.", "Linux does not allow access to the USB port.\n\nSet it up once now? A window will then ask"
+            " for your password."),
         parent=parent or app,
     ):
         return False
@@ -337,7 +347,7 @@ def fix_serial_permissions(parent=None):
         ok = subprocess.run(["pkexec", "/bin/sh", "-c", script]).returncode == 0
     except Exception:
         ok = False
-    append_text("USB-Rechte eingerichtet.\n" if ok else "USB-Rechte nicht eingerichtet.\n", "success" if ok else "error")
+    append_text(T("USB-Rechte eingerichtet.\n", "USB permissions set up.\n") if ok else T("USB-Rechte nicht eingerichtet.\n", "USB permissions not set up.\n"), "success" if ok else "error")
     return ok
 
 # Mehrere Geraete gleichzeitig: jedes verbundene Geraet (Dongle, Tracker) hat
@@ -399,7 +409,7 @@ def device_name(dev):
     if dev.is_dongle:
         return "📡 Dongle"
     if dev.is_receiver:
-        return "Empfänger"
+        return T("Empfänger", "Receiver")
     return f"Tracker {dev.number}"
 
 def make_console():
@@ -420,7 +430,7 @@ def get_or_add_device(info):
     dev.button = ctk.CTkButton(device_list, text=device_name(dev), width=110,
                                command=lambda d=dev: select_device(d))
     dev.button.bind("<Button-3>", lambda e, d=dev: open_device_menu(d, e))
-    ToolTip(dev.button, "Rechtsklick: trennen, umbenennen, als Dongle festlegen")
+    ToolTip(dev.button, T("Rechtsklick: trennen, umbenennen, als Dongle festlegen", "Right-click: disconnect, rename, set as dongle"))
     devices.append(dev)
     refresh_sidebar()
     return dev
@@ -443,11 +453,11 @@ def sync_active():
     ser = dev.ser if dev and dev.connected else None
     connected = ser is not None
     if dev is None:
-        status_label.configure(text="Not connected", text_color="red")
+        status_label.configure(text=T("Nicht verbunden", "Not connected"), text_color="red")
     elif connected:
-        status_label.configure(text=f"{device_name(dev)}: Connected to {dev.port}", text_color="green")
+        status_label.configure(text=T(f"{device_name(dev)}: verbunden mit {dev.port}", f"{device_name(dev)}: Connected to {dev.port}"), text_color="green")
     else:
-        status_label.configure(text=f"{device_name(dev)}: getrennt", text_color="orange")
+        status_label.configure(text=T(f"{device_name(dev)}: getrennt", f"{device_name(dev)}: disconnected"), text_color="orange")
 
 def select_device(dev):
     global active_device, console
@@ -455,8 +465,8 @@ def select_device(dev):
     console.pack_forget()
     console = dev.console if dev else base_console
     console.pack(fill="both", expand=True)
-    if dev and tab_view.get() != "Settings":
-        tab_view.set("Receiver" if dev.is_receiver else "Tracker")
+    if dev and tab_view.get() != TAB_SETTINGS:
+        tab_view.set(T("Empfänger", "Receiver") if dev.is_receiver else "Tracker")
     refresh_sidebar()
     sync_active()
 
@@ -470,13 +480,13 @@ def connect_device(dev, ask=True, parent=None, quiet=False):
         if ask and is_permission_error(e) and fix_serial_permissions(parent):
             return connect_device(dev, ask=False, parent=parent, quiet=quiet)
         if not quiet:
-            append_text(f"Failed to connect: {e}\n", "error", dev)
+            append_text(T(f"Verbindung fehlgeschlagen: {e}\n", f"Failed to connect: {e}\n"), "error", dev)
         refresh_sidebar()
         sync_active()
         return False
     dev.stop = threading.Event()
     threading.Thread(target=read_serial, args=(dev,), daemon=True).start()
-    append_text(f"Connected to {dev.port}\n", "success", dev)
+    append_text(T(f"Verbunden mit {dev.port}\n", f"Connected to {dev.port}\n"), "success", dev)
     refresh_sidebar()
     sync_active()
     return True
@@ -517,16 +527,16 @@ def remove_device(dev):
 def open_device_menu(dev, event):
     menu = tk.Menu(app, tearoff=0)
     if dev.connected:
-        menu.add_command(label="Trennen", command=lambda: (setattr(dev, "manual_off", True), device_lost(dev, "Getrennt.\n")))
+        menu.add_command(label=T("Trennen", "Disconnect"), command=lambda: (setattr(dev, "manual_off", True), device_lost(dev, T("Getrennt.\n", "Disconnected.\n"))))
     else:
-        menu.add_command(label="Verbinden", command=lambda: (setattr(dev, "manual_off", False), connect_device(dev)))
+        menu.add_command(label=T("Verbinden", "Connect"), command=lambda: (setattr(dev, "manual_off", False), connect_device(dev)))
     if dev.is_dongle:
-        menu.add_command(label="Dongle-Festlegung aufheben", command=lambda: set_dongle(None))
+        menu.add_command(label=T("Dongle-Festlegung aufheben", "Unset as dongle"), command=lambda: set_dongle(None))
     elif dev.serial_number:
-        menu.add_command(label="Als Dongle festlegen", command=lambda: set_dongle(dev))
-    menu.add_command(label="Umbenennen…", command=lambda: rename_device(dev))
+        menu.add_command(label=T("Als Dongle festlegen", "Set as dongle"), command=lambda: set_dongle(dev))
+    menu.add_command(label=T("Umbenennen…", "Rename…"), command=lambda: rename_device(dev))
     menu.add_separator()
-    menu.add_command(label="Entfernen", command=lambda: remove_device(dev))
+    menu.add_command(label=T("Entfernen", "Remove"), command=lambda: remove_device(dev))
     menu.tk_popup(event.x_root, event.y_root)
 
 def set_dongle(dev):
@@ -535,10 +545,10 @@ def set_dongle(dev):
     refresh_sidebar()
     sync_active()
     if dev:
-        append_text("Als Dongle festgelegt. Er verbindet sich ab jetzt von selbst.\n", "success", dev)
+        append_text(T("Als Dongle festgelegt. Er verbindet sich ab jetzt von selbst.\n", "Set as dongle. It will now connect automatically.\n"), "success", dev)
 
 def rename_device(dev):
-    name = ctk.CTkInputDialog(text="Neuer Name (leer = Standard):", title="Umbenennen").get_input()
+    name = ctk.CTkInputDialog(text=T("Neuer Name (leer = Standard):", "New name (empty = default):"), title=T("Umbenennen", "Rename")).get_input()
     if name is None:
         return
     names = settings.setdefault("device_names", {})
@@ -569,7 +579,8 @@ def watch_devices():
             ok = connect_device(dev, ask=not perm_state["asked"], quiet=True)
             if not ok and dev.last_error is not None and is_permission_error(dev.last_error):
                 perm_state["asked"] = True
-                append_text(f"{device_name(dev)}: keine Berechtigung für {dev.port}. Über „Geräteverwaltung → Alle angesteckten verbinden“ einrichten.\n",
+                append_text(T(f"{device_name(dev)}: keine Berechtigung für {dev.port}. Über „Geräteverwaltung → Alle angesteckten verbinden“ einrichten.\n", f"{device_name(dev)}: no permission for {dev.port}. Set it up via “Device Manager → Connect"
+                    " all plugged in”.\n"),
                             "error", dev)
             if ok and active_device is None:
                 select_device(dev)
@@ -597,31 +608,31 @@ def pair_all():
         or next((d for d in devices if d.is_receiver and d.connected), None)
     trackers = [d for d in devices if not d.is_receiver and d.connected]
     if not dongle:
-        append_text("Kein Dongle verbunden.\n", "error")
+        append_text(T("Kein Dongle verbunden.\n", "No dongle connected.\n"), "error")
         return
     if not trackers:
-        append_text("Kein Tracker verbunden.\n", "error")
+        append_text(T("Kein Tracker verbunden.\n", "No tracker connected.\n"), "error")
         return
     send_command("pair", dongle)
     for d in trackers:
         send_command("pair", d)
-    append_text(f"Kopplungsmodus: Dongle + {len(trackers)} Tracker.\n", "success")
+    append_text(T(f"Kopplungsmodus: Dongle + {len(trackers)} Tracker.\n", f"Pairing mode: dongle + {len(trackers)} tracker(s).\n"), "success")
 
 # El button to connect your Smol Slimes to El program
 def connect_to_port():
     port = port_option.get()
     if not port or "No ports" in port:
-        append_text("No valid port selected.\n", "error")
+        append_text(T("Kein gültiger Port gewählt.\n", "No valid port selected.\n"), "error")
         return
     info = next((p for p in serial.tools.list_ports.comports() if p.device == port), None)
     if info is None:
-        append_text(f"{port} ist nicht mehr da.\n", "error")
+        append_text(T(f"{port} ist nicht mehr da.\n", f"{port} is gone.\n"), "error")
         refresh_ports()
         return
     dev = get_or_add_device(info)
     dev.manual_off = False
     if not dev.connected and not connect_device(dev):
-        status_label.configure(text="Connection failed", text_color="red")
+        status_label.configure(text=T("Verbindung fehlgeschlagen", "Connection failed"), text_color="red")
     select_device(dev)
 
 
@@ -634,9 +645,9 @@ def send_command(cmd, dev=None):
                 dev.ser.write((cmd + "\n").encode())
             append_text(f">>> {cmd}\n", None, dev)
         except (serial.SerialException, OSError) as e:
-            device_lost(dev, f"[Error] Serial write failed: {e}\n")
+            device_lost(dev, T(f"[Fehler] Senden fehlgeschlagen: {e}\n", f"[Error] Serial write failed: {e}\n"))
     else:
-        append_text("Not connected.\n", "error", dev)
+        append_text(T("Nicht verbunden.\n", "Not connected.\n"), "error", dev)
 
 def read_serial(dev):
     s = dev.ser
@@ -651,7 +662,7 @@ def read_serial(dev):
                 time.sleep(0.01)
         except Exception as e:
             if not dev.stop.is_set():
-                serial_queue.put((dev, None, f"Device disconnected: {e}\n"))
+                serial_queue.put((dev, None, T(f"Gerät getrennt: {e}\n", f"Device disconnected: {e}\n")))
             break
 
 
@@ -686,7 +697,7 @@ def append_text(text, color=None, dev=None):
 def on_tracker_change(choice):
     global custom_fw_path
     if choice == "Custom…":
-        path = filedialog.askopenfilename(title="Select firmware (.uf2 or .hex)", filetypes=[("Firmware files", "*.uf2 *.hex"), ("UF2 files", "*.uf2"), ("HEX files", "*.hex")])
+        path = filedialog.askopenfilename(title="Select firmware (.uf2 or .hex)", filetypes=[("Firmware files", "*.uf2 *.hex"), (T("UF2-Dateien", "UF2 files"), "*.uf2"), ("HEX files", "*.hex")])
         if path:
             custom_fw_path = path
             send_button.configure(text=f"Flash: {os.path.basename(path)}")
@@ -704,7 +715,8 @@ header.pack(fill="x", padx=16, pady=(12, 0))
 header_text = ctk.CTkFrame(header, fg_color="transparent")
 header_text.pack(side="left")
 ctk.CTkLabel(header_text, text="SmolSlime Configurator", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
-ctk.CTkLabel(header_text, text=f"Tracker und Dongle verbinden, einstellen und flashen · v{APP_VERSION}",
+ctk.CTkLabel(header_text, text=T(f"Tracker und Dongle verbinden, einstellen und flashen · v{APP_VERSION}",
+                                       f"Connect, configure and flash trackers and dongles · v{APP_VERSION}"),
              text_color=("gray35", "gray65")).pack(anchor="w")
 # Werkzeuge oben rechts; die alte Leiste darunter wird nicht mehr angezeigt
 header_buttons = ctk.CTkFrame(header, fg_color="transparent")
@@ -717,7 +729,7 @@ top_frame = ctk.CTkFrame(app)
 
 initial_ports = list_serial_ports()
 if not initial_ports:
-    initial_ports = ["No ports found"]
+    initial_ports = [T("Keine Ports gefunden", "No ports found")]
 
 port_option = ctk.CTkOptionMenu(top_frame, values=initial_ports)
 port_option.set(initial_ports[0])
@@ -728,7 +740,7 @@ btn_refresh = ctk.CTkButton(top_frame, text="↻", width=10, command=refresh_por
 btn_refresh.pack(side="left", padx=5)
 ToolTip(btn_refresh, "Refresh serial port")
 
-btn_connect = ctk.CTkButton(top_frame, text="Connect", command=connect_to_port,
+btn_connect = ctk.CTkButton(top_frame, text=T("Verbinden", "Connect"), command=connect_to_port,
                             fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
 btn_connect.pack(side="left", padx=5)
 ToolTip(btn_connect, "Connect to the selected serial port")
@@ -1006,7 +1018,7 @@ def download_firmware():
     
 
     if selection == "Custom (User provided .uf2 / .hex)":
-        file_path = filedialog.askopenfilename(filetypes=[("Firmware files", "*.uf2 *.hex"), ("UF2 files", "*.uf2"), ("HEX files", "*.hex")])
+        file_path = filedialog.askopenfilename(filetypes=[("Firmware files", "*.uf2 *.hex"), (T("UF2-Dateien", "UF2 files"), "*.uf2"), ("HEX files", "*.hex")])
         if not file_path:
             append_text("No custom firmware selected.\n")
             return
@@ -1217,7 +1229,7 @@ def mount_drive(drive):
         if mount:
             mount_errors.pop(dev, None)
             return mount
-        mount_errors[dev] = (res.stderr or "").strip().splitlines()[-1] if res.stderr else "unbekannter Fehler"
+        mount_errors[dev] = (res.stderr or "").strip().splitlines()[-1] if res.stderr else T("unbekannter Fehler", "unknown error")
     return None
 
 # Wurzelpfade aller UF2-Bootloader-Laufwerke. Linux haengt neue kleine
@@ -1248,63 +1260,81 @@ multi_win = None
 # Bauweise -> Geraete -> Flash-Methode -> Flashen. Board und Bauweise stehen
 # im Dateinamen, z.B. SlimeNRF_Tracker_TDMA_NoSleep_SPI_Mag_ProMicro.uf2.
 FW_SOURCES = [
-    {"id": "main", "name": "SlimeNRF-Firmware-CI", "owner": "Shine-Bright-Meow", "badge": "Offiziell",
+    {"id": "main", "name": "SlimeNRF-Firmware-CI", "owner": "Shine-Bright-Meow", "badge": T("Offiziell", "Official"),
      "repo": "Shine-Bright-Meow/SlimeNRF-Firmware-CI"},
-    {"id": "kounocom", "name": "SlimeNRF-Firmware-CI", "owner": "kounocom", "badge": "Drittanbieter",
+    {"id": "kounocom", "name": "SlimeNRF-Firmware-CI", "owner": "kounocom", "badge": T("Drittanbieter", "Third party"),
      "repo": "kounocom/SlimeNRF-Firmware-CI"},
-    {"id": "jitingcn", "name": "SlimeVR-Tracker-nRF", "owner": "jitingcn", "badge": "Drittanbieter",
+    {"id": "jitingcn", "name": "SlimeVR-Tracker-nRF", "owner": "jitingcn", "badge": T("Drittanbieter", "Third party"),
      "repo": "jitingcn/SlimeVR-Tracker-nRF"},
-    {"id": "all", "name": "Alle Quellen", "owner": "jeweils neueste", "badge": "Alle", "repo": "*"},
-    {"id": "file", "name": "Eigene Datei", "owner": ".uf2 vom Rechner", "badge": "Datei", "repo": None},
+    {"id": "all", "name": T("Alle Quellen", "All sources"), "owner": T("jeweils neueste", "newest of each"), "badge": T("Alle", "All"), "repo": "*"},
+    {"id": "file", "name": T("Eigene Datei", "Own file"), "owner": T(".uf2 vom Rechner", ".uf2 from this computer"), "badge": T("Datei", "File"), "repo": None},
 ]
 
 FW_OPTION_GROUPS = [
-    ("variant", "Bauform", ["StackedSmol", "Chrysalis"]),
-    ("bus", "Sensor-Anschluss", ["SPI", "I2C"]),
-    ("pins", "smSPI-Belegung", ["SmolPins"]),
+    ("variant", T("Bauform", "Form factor"), ["StackedSmol", "Chrysalis"]),
+    ("bus", T("Sensor-Anschluss", "Sensor bus"), ["SPI", "I2C"]),
+    ("pins", T("smSPI-Belegung", "smSPI pinout"), ["SmolPins"]),
     ("mag", "Magnetometer", ["Mag"]),
-    ("clk", "Sensor-Takt (CLK_CTL)", ["CLK"]),   # an/aus; NoCLK wird beim Einlesen umgerechnet
-    ("sleep", "Schlafmodus (WOM)", ["Sleep"]),   # an/aus; NoSleep wird beim Einlesen umgerechnet
-    ("sw0", "Taster an SW0", ["SW0"]),
-    ("tdma", "Funkmodus TDMA", ["TDMA"]),
-    ("data", "Datensammlung (CDC)", ["DataCollect"]),
+    ("clk", T("Sensor-Takt (CLK_CTL)", "Sensor clock (CLK_CTL)"), ["CLK"]),   # an/aus; NoCLK wird beim Einlesen umgerechnet
+    ("sleep", T("Schlafmodus (WOM)", "Sleep mode (WOM)"), [T("Schlafen", "Sleep")]),   # an/aus; NoSleep wird beim Einlesen umgerechnet
+    ("sw0", T("Taster an SW0", "Button on SW0"), ["SW0"]),
+    ("tdma", T("Funkmodus TDMA", "TDMA radio mode"), ["TDMA"]),
+    ("data", T("Datensammlung (CDC)", "Data collection (CDC)"), ["DataCollect"]),
 ]
 FW_OPTION_TOKENS = {t for _, _, toks in FW_OPTION_GROUPS for t in toks}
 
 # Erklaerungen fuer Leute ohne Vorwissen. Grundlage: Kconfig der offiziellen
 # Firmware und das Build-Skript der CI (was jede Option beim Bauen umschaltet).
 FW_OPTION_HELP = {
-    "variant": "Wie der Tracker um den Controller herum aufgebaut ist. „Stacked Smol“: der Sensor sitzt huckepack "
+    "variant": T("Wie der Tracker um den Controller herum aufgebaut ist. „Stacked Smol“: der Sensor sitzt huckepack "
                "direkt auf dem ProMicro. Chrysalis ist eine fertige Tracker-Platine (SPI, mit Taster). „Normal (Non-Stacked)“: "
                "so heißt es auch in der SlimeVR-Doku – der Sensor sitzt nicht auf dem ProMicro, sondern ist z. B. "
-               "mit Kabeln verbunden.",
-    "bus": "Wie der Bewegungssensor mit dem Controller verbunden ist. SPI ist schneller und weniger störanfällig "
+               "mit Kabeln verbunden.", "How the tracker is built around the controller. “Stacked Smol”: the sensor sits piggyback"
+        " directly on the ProMicro. Chrysalis is a ready-made tracker board (SPI, with button)."
+        " “Normal (Non-Stacked)”: as the SlimeVR docs call it – the sensor does not sit on the"
+        " ProMicro but is connected e.g. with wires."),
+    "bus": T("Wie der Bewegungssensor mit dem Controller verbunden ist. SPI ist schneller und weniger störanfällig "
            "und wird deshalb empfohlen. I2C braucht weniger Drähte und funktioniert auch. Wichtig: Die Wahl muss "
-           "zu deiner Verdrahtung passen, sonst wird der Sensor nicht gefunden.",
-    "pins": "Nur bei SPI: eine andere Pinbelegung, bei der CS an P0.24 und INT an P1.00 liegen. Nur wählen, "
-            "wenn dein Schaltplan das so vorgibt – sonst bleibt der Haken aus.",
-    "mag": "Ein Magnetometer ist ein Kompass-Sensor. Er verhindert, dass sich die Drehung des Trackers mit der Zeit "
+           "zu deiner Verdrahtung passen, sonst wird der Sensor nicht gefunden.", "How the motion sensor is connected to the controller. SPI is faster and less prone to"
+        " interference, so it is recommended. I2C needs fewer wires and works too. Important: the"
+        " choice must match your wiring, otherwise the sensor is not found."),
+    "pins": T("Nur bei SPI: eine andere Pinbelegung, bei der CS an P0.24 und INT an P1.00 liegen. Nur wählen, "
+            "wenn dein Schaltplan das so vorgibt – sonst bleibt der Haken aus.", "SPI only: a different pinout with CS on P0.24 and INT on P1.00. Only select it if your"
+        " schematic says so – otherwise leave it unchecked."),
+    "mag": T("Ein Magnetometer ist ein Kompass-Sensor. Er verhindert, dass sich die Drehung des Trackers mit der Zeit "
            "langsam verschiebt (Drift). Nur einschalten, wenn wirklich einer verbaut ist. In der Nähe von Metall, "
-           "Magneten oder Lautsprechern kann er stören.",
-    "clk": "Leitung, über die der Controller den Takt des Sensors steuert. Im Schaltplan der SlimeVR-Doku heißt "
+           "Magneten oder Lautsprechern kann er stören.", "A magnetometer is a compass sensor. It keeps the tracker's rotation from slowly shifting"
+        " over time (drift). Only enable it if one is actually fitted. Near metal, magnets or"
+        " speakers it can cause trouble."),
+    "clk": T("Leitung, über die der Controller den Takt des Sensors steuert. Im Schaltplan der SlimeVR-Doku heißt "
            "sie CLK_CTL – beim Stacked Smol Pin 111 (P1.11), beim normalen ProMicro laut Firmware P0.20. Nur "
            "einschalten, wenn diese Leitung verlötet ist. Nicht verwechseln mit INT: das ist die Interrupt-Leitung, "
-           "die immer verlötet sein muss.",
-    "sleep": "An (empfohlen): Liegt der Tracker still, legt er sich schlafen und wacht bei Bewegung von selbst "
+           "die immer verlötet sein muss.", "Line through which the controller drives the sensor's clock. In the SlimeVR docs schematic"
+        " it is called CLK_CTL – on the Stacked Smol pin 111 (P1.11), on the normal ProMicro P0.20"
+        " according to the firmware. Only enable it if this line is soldered. Not to be confused"
+        " with INT: that is the interrupt line, which must always be soldered."),
+    "sleep": T("An (empfohlen): Liegt der Tracker still, legt er sich schlafen und wacht bei Bewegung von selbst "
              "wieder auf (WOM = Wake on Motion). Das spart viel Akku. Aus: Der Tracker bleibt immer wach und "
              "reagiert sofort, aber der Akku hält deutlich kürzer. Aus nur, wenn dein Sensor das Aufwecken durch "
-             "Bewegung nicht kann.",
-    "sw0": "Nur für einen Taster (drücken, federt zurück) zwischen Pin P1.00 und GND. Damit kannst du koppeln "
+             "Bewegung nicht kann.", "On (recommended): when the tracker lies still it goes to sleep and wakes up by itself on"
+        " movement (WOM = Wake on Motion). This saves a lot of battery. Off: the tracker always"
+        " stays awake and reacts instantly, but the battery lasts much shorter. Only off if your"
+        " sensor cannot wake on motion."),
+    "sw0": T("Nur für einen Taster (drücken, federt zurück) zwischen Pin P1.00 und GND. Damit kannst du koppeln "
            "(5 Sekunden halten), ausschalten und aufwecken. Ein Ein/Aus-Schiebeschalter zwischen Akku und Board "
            "ist kein SW0 – dafür nicht anhaken. Ein Taster am RST-Pin funktioniert auch ohne diese Option. "
-           "Beim Stacked Smol (P0.06) und beim Chrysalis ist der Taster fest eingebaut und immer an.",
-    "tdma": "Neuerer Funkmodus mit festen Zeitfenstern pro Tracker – kann bei vielen Trackern stabiler sein. "
-            "Achtung: Der Dongle braucht dann ebenfalls TDMA-Firmware, sonst verbinden sie sich nicht.",
-    "data": "Gibt zusätzlich Rohdaten über USB aus. Nur für Fehlersuche oder Entwicklung.",
+           "Beim Stacked Smol (P0.06) und beim Chrysalis ist der Taster fest eingebaut und immer an.", "Only for a push button (press, springs back) between pin P1.00 and GND. It lets you pair"
+        " (hold 5 seconds), power off and wake up. An on/off slide switch between battery and board"
+        " is not SW0 – do not check it for that. A button on the RST pin works without this option"
+        " too. On the Stacked Smol (P0.06) and the Chrysalis the button is built in and always on."),
+    "tdma": T("Neuerer Funkmodus mit festen Zeitfenstern pro Tracker – kann bei vielen Trackern stabiler sein. "
+            "Achtung: Der Dongle braucht dann ebenfalls TDMA-Firmware, sonst verbinden sie sich nicht.", "Newer radio mode with fixed time slots per tracker – can be more stable with many"
+        " trackers. Note: the dongle then needs TDMA firmware too, otherwise they will not connect."),
+    "data": T("Gibt zusätzlich Rohdaten über USB aus. Nur für Fehlersuche oder Entwicklung.", "Additionally outputs raw data over USB. Only for debugging or development."),
 }
 
 FW_CHOICE_LABELS = {
-    "bus": {"SPI": "SPI (empfohlen)", "I2C": "I2C"},
+    "bus": {"SPI": T("SPI (empfohlen)", "SPI (recommended)"), "I2C": "I2C"},
     "variant": {"StackedSmol": "Stacked Smol", None: "Normal (Non-Stacked)"},
 }
 
@@ -1312,71 +1342,75 @@ FW_CHOICE_LABELS = {
 # (name, Beschriftung, Art, Standard in Anzeige-Einheit, Einheit, Faktor zur Firmware-Einheit, Erklaerung)
 FW_SETTINGS = [
     ("Sensor", [
-        ("sensor_use_mag", "Magnetometer benutzen", "bool", True, "", 1,
-         "Schaltet den Kompass-Sensor ein oder aus, falls einer verbaut ist."),
-        ("use_sensor_clock", "Sensor-Takt (CLK_CTL) benutzen", "bool", True, "", 1,
-         "Nutzt die Takt-Leitung CLK_CTL zum Sensor, falls sie verlötet ist."),
-        ("sensor_use_6_side_calibration", "6-Seiten-Kalibrierung", "bool", True, "", 1,
-         "Genauere Kalibrierung des Beschleunigungssensors. Wird in der Konsole mit „6-side“ durchgeführt."),
-        ("sensor_accel_odr", "Messrate Beschleunigung", "int", 100, "Hz", 1,
-         "Wie oft pro Sekunde gemessen wird. Höher = genauer, aber mehr Rechenzeit und Stromverbrauch."),
-        ("sensor_gyro_odr", "Messrate Gyroskop", "int", 200, "Hz", 1,
-         "Wie oft pro Sekunde die Drehung gemessen wird. Bei rauschenden Sensoren (BMI270, LSM6DS3TR-C) "
-         "ist ein niedrigerer Wert besser."),
-        ("sensor_accel_fs", "Messbereich Beschleunigung", "int", 4, "g", 1,
-         "Kleiner = feiner und rauschärmer, aber schnelle Bewegungen können „überlaufen“."),
-        ("sensor_gyro_fs", "Messbereich Gyroskop", "int", 1000, "°/s", 1,
-         "Kleiner = feiner, aber sehr schnelle Drehungen können „überlaufen“."),
+        ("sensor_use_mag", T("Magnetometer benutzen", "Use magnetometer"), "bool", True, "", 1,
+         T("Schaltet den Kompass-Sensor ein oder aus, falls einer verbaut ist.", "Turns the compass sensor on or off, if one is fitted.")),
+        ("use_sensor_clock", T("Sensor-Takt (CLK_CTL) benutzen", "Use sensor clock (CLK_CTL)"), "bool", True, "", 1,
+         T("Nutzt die Takt-Leitung CLK_CTL zum Sensor, falls sie verlötet ist.", "Uses the CLK_CTL clock line to the sensor, if it is soldered.")),
+        ("sensor_use_6_side_calibration", T("6-Seiten-Kalibrierung", "6-side calibration"), "bool", True, "", 1,
+         T("Genauere Kalibrierung des Beschleunigungssensors. Wird in der Konsole mit „6-side“ durchgeführt.", "More accurate accelerometer calibration. Run it in the console with “6-side”.")),
+        ("sensor_accel_odr", T("Messrate Beschleunigung", "Accelerometer rate"), "int", 100, "Hz", 1,
+         T("Wie oft pro Sekunde gemessen wird. Höher = genauer, aber mehr Rechenzeit und Stromverbrauch.", "How many times per second it measures. Higher = more accurate, but more processing and"
+             " power use.")),
+        ("sensor_gyro_odr", T("Messrate Gyroskop", "Gyroscope rate"), "int", 200, "Hz", 1,
+         T("Wie oft pro Sekunde die Drehung gemessen wird. Bei rauschenden Sensoren (BMI270, LSM6DS3TR-C) "
+         "ist ein niedrigerer Wert besser.", "How many times per second rotation is measured. For noisy sensors (BMI270, LSM6DS3TR-C) a"
+             " lower value is better.")),
+        ("sensor_accel_fs", T("Messbereich Beschleunigung", "Accelerometer range"), "int", 4, "g", 1,
+         T("Kleiner = feiner und rauschärmer, aber schnelle Bewegungen können „überlaufen“.", "Smaller = finer and less noisy, but fast movements can “overflow”.")),
+        ("sensor_gyro_fs", T("Messbereich Gyroskop", "Gyroscope range"), "int", 1000, "°/s", 1,
+         T("Kleiner = feiner, aber sehr schnelle Drehungen können „überlaufen“.", "Smaller = finer, but very fast rotations can “overflow”.")),
     ]),
-    ("Energie und Schlaf", [
-        ("use_imu_timeout", "Bei Stillstand schlafen", "bool", True, "", 1,
-         "Liegt der Tracker still, geht der Sensor in einen Schlafzustand. Spart viel Akku."),
-        ("imu_timeout_ramp_min", "Schlafen frühestens nach", "int", 5, "s", 1000,
-         "So lange muss der Tracker mindestens stillliegen, bevor er schläft."),
-        ("imu_timeout_ramp_max", "Schlafen spätestens nach", "int", 15, "s", 1000,
-         "Längste Wartezeit bei Stillstand, bevor er schläft."),
-        ("use_imu_wake_up", "Aufwecken durch Bewegung", "bool", True, "", 1,
-         "Der Sensor weckt den Tracker auf, sobald er bewegt wird."),
-        ("sensor_lp_timeout", "Stromsparmodus nach", "int", 500, "ms", 1,
-         "Nach so vielen Millisekunden ohne Bewegung misst der Sensor sparsamer."),
-        ("sensor_use_low_power_2", "Zusätzliche Sparmodi", "bool", False, "", 1,
-         "Noch sparsamer bei Stillstand, reagiert dafür minimal verzögert."),
-        ("delay_sleep_on_status", "Nicht schlafen bei Statusmeldung", "bool", True, "", 1,
-         "Verschiebt den Schlaf, solange eine Meldung anliegt oder gekoppelt wird."),
+    (T("Energie und Schlaf", "Power and sleep"), [
+        ("use_imu_timeout", T("Bei Stillstand schlafen", "Sleep when still"), "bool", True, "", 1,
+         T("Liegt der Tracker still, geht der Sensor in einen Schlafzustand. Spart viel Akku.", "When the tracker lies still, the sensor goes to sleep. Saves a lot of battery.")),
+        ("imu_timeout_ramp_min", T("Schlafen frühestens nach", "Sleep at the earliest after"), "int", 5, "s", 1000,
+         T("So lange muss der Tracker mindestens stillliegen, bevor er schläft.", "How long the tracker must lie still at least before it sleeps.")),
+        ("imu_timeout_ramp_max", T("Schlafen spätestens nach", "Sleep at the latest after"), "int", 15, "s", 1000,
+         T("Längste Wartezeit bei Stillstand, bevor er schläft.", "Longest wait while still before it sleeps.")),
+        ("use_imu_wake_up", T("Aufwecken durch Bewegung", "Wake on motion"), "bool", True, "", 1,
+         T("Der Sensor weckt den Tracker auf, sobald er bewegt wird.", "The sensor wakes the tracker as soon as it is moved.")),
+        ("sensor_lp_timeout", T("Stromsparmodus nach", "Low-power mode after"), "int", 500, "ms", 1,
+         T("Nach so vielen Millisekunden ohne Bewegung misst der Sensor sparsamer.", "After this many milliseconds without movement the sensor measures more sparingly.")),
+        ("sensor_use_low_power_2", T("Zusätzliche Sparmodi", "Extra power saving"), "bool", False, "", 1,
+         T("Noch sparsamer bei Stillstand, reagiert dafür minimal verzögert.", "Even more frugal when still, but reacts with a tiny delay.")),
+        ("delay_sleep_on_status", T("Nicht schlafen bei Statusmeldung", "Stay awake on status message"), "bool", True, "", 1,
+         T("Verschiebt den Schlaf, solange eine Meldung anliegt oder gekoppelt wird.", "Delays sleep while a status is shown or pairing is in progress.")),
     ]),
-    ("Zeitlimit bei Nichtbenutzung", [
-        ("use_active_timeout", "Zeitlimit benutzen", "bool", True, "", 1,
-         "Liegt der Tracker lange Zeit unbewegt herum (z. B. vergessen), legt er sich nach dem Zeitlimit "
-         "schlafen oder schaltet sich ganz aus."),
-        ("active_timeout_mode", "Danach", "enum", 0, "", {0: "Schlafen", 1: "Ausschalten"},
-         "Schlafen: wacht bei Bewegung wieder auf (braucht „Aufwecken durch Bewegung“). Ausschalten: muss "
-         "per Taster wieder eingeschaltet werden (braucht „Ausschalten per Taster“)."),
-        ("active_timeout_delay", "Zeitlimit", "int", 15, "min", 60000,
-         "Nach so vielen Minuten ohne Bewegung greift das Zeitlimit."),
-        ("active_timeout_threshold", "Schwelle", "int", 15, "s", 1000,
-         "Nach so vielen Sekunden Stillstand beginnt das Zeitlimit zu zählen."),
+    (T("Zeitlimit bei Nichtbenutzung", "Inactivity timeout"), [
+        ("use_active_timeout", T("Zeitlimit benutzen", "Use timeout"), "bool", True, "", 1,
+         T("Liegt der Tracker lange Zeit unbewegt herum (z. B. vergessen), legt er sich nach dem Zeitlimit "
+         "schlafen oder schaltet sich ganz aus.", "If the tracker lies unmoved for a long time (e.g. forgotten), it goes to sleep or powers"
+             " off completely after the timeout.")),
+        ("active_timeout_mode", T("Danach", "Then"), "enum", 0, "", {0: T("Schlafen", "Sleep"), 1: T("Ausschalten", "Power off")},
+         T("Schlafen: wacht bei Bewegung wieder auf (braucht „Aufwecken durch Bewegung“). Ausschalten: muss "
+         "per Taster wieder eingeschaltet werden (braucht „Ausschalten per Taster“).", "Sleep: wakes up again on movement (needs “Wake on motion”). Power off: must be switched on"
+             " again with the button (needs “Power off by button”).")),
+        ("active_timeout_delay", T("Zeitlimit", "Timeout"), "int", 15, "min", 60000,
+         T("Nach so vielen Minuten ohne Bewegung greift das Zeitlimit.", "The timeout applies after this many minutes without movement.")),
+        ("active_timeout_threshold", T("Schwelle", "Threshold"), "int", 15, "s", 1000,
+         T("Nach so vielen Sekunden Stillstand beginnt das Zeitlimit zu zählen.", "The timeout starts counting after this many seconds of standstill.")),
     ]),
-    ("Taster", [
-        ("user_extra_actions", "Mehrfachdruck-Aktionen", "bool", False, "", 1,
-         "Mehrmals drücken zum Kalibrieren, Koppeln oder für den Bootloader."),
-        ("ignore_reset", "Reset-Taster ignorieren", "bool", True, "", 1,
-         "Der Reset-Taster löst keine Zusatzaktionen aus."),
-        ("user_shutdown", "Ausschalten per Taster", "bool", True, "", 1,
-         "Der Tracker lässt sich per Taster bzw. Reset ausschalten."),
+    (T("Taster", "Button"), [
+        ("user_extra_actions", T("Mehrfachdruck-Aktionen", "Multi-press actions"), "bool", False, "", 1,
+         T("Mehrmals drücken zum Kalibrieren, Koppeln oder für den Bootloader.", "Press several times to calibrate, pair or enter the bootloader.")),
+        ("ignore_reset", T("Reset-Taster ignorieren", "Ignore reset button"), "bool", True, "", 1,
+         T("Der Reset-Taster löst keine Zusatzaktionen aus.", "The reset button does not trigger extra actions.")),
+        ("user_shutdown", T("Ausschalten per Taster", "Power off by button"), "bool", True, "", 1,
+         T("Der Tracker lässt sich per Taster bzw. Reset ausschalten.", "The tracker can be powered off with the button or reset.")),
     ]),
     ("LED", [
-        ("led_default_color", "Farbe im Normalbetrieb", "color", None, "", 1,
-         "Farbe der Status-LED, falls der Tracker eine RGB-LED hat."),
+        ("led_default_color", T("Farbe im Normalbetrieb", "Color in normal operation"), "color", None, "", 1,
+         T("Farbe der Status-LED, falls der Tracker eine RGB-LED hat.", "Color of the status LED, if the tracker has an RGB LED.")),
     ]),
-    ("Funk und Akku", [
-        ("radio_tx_power", "Sendeleistung", "int", 8, "dBm", 1,
-         "Weniger = etwas weniger Reichweite, dafür längere Akkulaufzeit. Höchstwert meist 8."),
-        ("connection_timeout_delay", "Abschalten ohne Dongle nach", "int", 5, "min", 60000,
-         "Findet der Tracker keinen Dongle, schaltet er sich nach dieser Zeit ab."),
-        ("connection_over_hid", "Daten per USB-HID ausgeben", "bool", False, "", 1,
-         "Nur für Sonderfälle: Daten per USB statt nur per Funk."),
-        ("battery_low_runtime_threshold", "Akku-Warnung unter", "int", 3, "h", 3600000,
-         "Warnt, wenn die geschätzte Restlaufzeit darunter fällt."),
+    (T("Funk und Akku", "Radio and battery"), [
+        ("radio_tx_power", T("Sendeleistung", "Transmit power"), "int", 8, "dBm", 1,
+         T("Weniger = etwas weniger Reichweite, dafür längere Akkulaufzeit. Höchstwert meist 8.", "Less = slightly less range, but longer battery life. Maximum usually 8.")),
+        ("connection_timeout_delay", T("Abschalten ohne Dongle nach", "Power off without dongle after"), "int", 5, "min", 60000,
+         T("Findet der Tracker keinen Dongle, schaltet er sich nach dieser Zeit ab.", "If the tracker finds no dongle, it powers off after this time.")),
+        ("connection_over_hid", T("Daten per USB-HID ausgeben", "Output data over USB HID"), "bool", False, "", 1,
+         T("Nur für Sonderfälle: Daten per USB statt nur per Funk.", "Special cases only: data over USB instead of radio only.")),
+        ("battery_low_runtime_threshold", T("Akku-Warnung unter", "Battery warning below"), "int", 3, "h", 3600000,
+         T("Warnt, wenn die geschätzte Restlaufzeit darunter fällt.", "Warns when the estimated remaining runtime drops below this.")),
     ]),
 ]
 
@@ -1412,7 +1446,7 @@ def target_has_rgb(target):
         return False
     return None
 
-LED_UNKNOWN_NOTE = "ob dieses Board eine Farb-LED hat, ist nicht geprüft"
+LED_UNKNOWN_NOTE = T("ob dieses Board eine Farb-LED hat, ist nicht geprüft", "whether this board has a color LED has not been checked")
 
 # Im DIY Firmware-Tool legt schon die Bauweise (Schritt 2 oben) Magnetometer und Sensor-Takt fest;
 # unten bei den optionalen Einstellungen waeren sie doppelt. Die Geraeteverwaltung zeigt sie weiter.
@@ -1457,7 +1491,7 @@ def bauform_images(parent):
         ctk.CTkLabel(cell, text=caption, text_color=FW_DIM).pack()
         shown += 1
     if shown:
-        ctk.CTkLabel(outer, text="Schaltpläne: SlimeVR-Doku (MIT-Lizenz)", text_color=FW_DIM,
+        ctk.CTkLabel(outer, text=T("Schaltpläne: SlimeVR-Doku (MIT-Lizenz)", "Schematics: SlimeVR docs (MIT license)"), text_color=FW_DIM,
                      font=ctk.CTkFont(size=11)).pack(anchor="w")
     return outer
 
@@ -1487,7 +1521,7 @@ def label_with_help(parent, row, text, help_text, bold=False, padx=12, images=No
 # Zwei Namensschemata: SlimeNRF_Tracker_SPI_Mag_ProMicro (CI) und
 # SlimeNRF_ProMicro_StackedSmol_Tracker_I2C bzw. Aero_Tracker_Pro (jitingcn).
 # Bekannte Optionen werden herausgezogen, der Rest ist das Board.
-FW_TOKEN_ALIASES = {t.lower(): t for t in (FW_OPTION_TOKENS - {"Sleep", "SmolPins"}) | {"NoCLK", "NoSleep", "smSPI"}}
+FW_TOKEN_ALIASES = {t.lower(): t for t in (FW_OPTION_TOKENS - {T("Schlafen", "Sleep"), "SmolPins"}) | {"NoCLK", "NoSleep", "smSPI"}}
 
 def parse_fw_name(name):
     base, _, ext = name.rpartition(".")
@@ -1527,7 +1561,7 @@ def parse_fw_name(name):
         if "NoSleep" in opts:
             opts.discard("NoSleep")
         else:
-            opts.add("Sleep")
+            opts.add(T("Schlafen", "Sleep"))
     return {
         "role": role,
         "board": "_".join(t for t in rest if t.lower() not in FW_TOKEN_ALIASES and t.lower() != "nosleepclk"
@@ -1618,7 +1652,7 @@ def open_multiflash_window(role=None):
 
     win = ctk.CTkToplevel(app, fg_color=FW_BG)
     multi_win = win
-    win.title("DIY Firmware-Tool")
+    win.title(T("DIY Firmware-Tool", "DIY Firmware Tool"))
     win.geometry("880x780")
     win.transient(app)
 
@@ -1637,8 +1671,8 @@ def open_multiflash_window(role=None):
 
     head = ctk.CTkFrame(win, fg_color="transparent")
     head.pack(fill="x", padx=20, pady=(16, 4))
-    ctk.CTkLabel(head, text="DIY Firmware-Tool", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
-    ctk.CTkLabel(head, text="Erlaubt dir das Konfigurieren und Flashen von DIY-Trackern und Dongles", text_color=FW_DIM).pack(anchor="w")
+    ctk.CTkLabel(head, text=T("DIY Firmware-Tool", "DIY Firmware Tool"), font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+    ctk.CTkLabel(head, text=T("Erlaubt dir das Konfigurieren und Flashen von DIY-Trackern und Dongles", "Lets you configure and flash DIY trackers and dongles"), text_color=FW_DIM).pack(anchor="w")
 
     body = ctk.CTkScrollableFrame(win, fg_color="transparent")
     body.pack(fill="both", expand=True, padx=10, pady=(4, 10))
@@ -1659,11 +1693,11 @@ def open_multiflash_window(role=None):
         steps.append({"circle": circle, "sub": sub, "frame": frame})
         return frame
 
-    def nav(frame, row, next_cmd=None, next_text="Nächster Schritt", back=True):
+    def nav(frame, row, next_cmd=None, next_text=T("Nächster Schritt", "Next step"), back=True):
         bar = ctk.CTkFrame(frame, fg_color="transparent")
         bar.grid(row=row, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         if back:
-            ctk.CTkButton(bar, text="Zurück", width=100, fg_color="transparent", border_width=1,
+            ctk.CTkButton(bar, text=T("Zurück", "Back"), width=100, fg_color="transparent", border_width=1,
                           border_color=FW_SLATE, command=go_back).pack(side="left")
         if not next_cmd:
             return None
@@ -1679,7 +1713,7 @@ def open_multiflash_window(role=None):
         go(0 if cur["i"] == 2 and st["file"] else cur["i"] - 1)
 
     # ---------- 1: Firmware waehlen ----------
-    f1 = make_step(0, "Wähle die Firmware zum Flashen aus", "Quelle, Board und Version")
+    f1 = make_step(0, T("Wähle die Firmware zum Flashen aus", "Choose the firmware to flash"), T("Quelle, Board und Version", "Source, board and version"))
     for c in range(3):
         f1.grid_columnconfigure(c, weight=1, uniform="s1")
 
@@ -1692,9 +1726,9 @@ def open_multiflash_window(role=None):
         inner.pack(fill="both", expand=True, pady=(4, 0))
         return inner
 
-    col_src = column(0, "Firmware-Quelle")
-    col_board = column(1, "Boardtyp")
-    col_ver = column(2, "Firmware-Version")
+    col_src = column(0, T("Firmware-Quelle", "Firmware source"))
+    col_board = column(1, T("Boardtyp", "Board type"))
+    col_ver = column(2, T("Firmware-Version", "Firmware version"))
 
     src_cards = {}
     for src in fw_sources():
@@ -1709,7 +1743,7 @@ def open_multiflash_window(role=None):
         o = ctk.CTkLabel(line, text=src["owner"], anchor="w", text_color=FW_DIM)
         o.pack(side="left")
         badge = ctk.CTkLabel(line, text=f" {src['badge']} ", corner_radius=6, height=18,
-                             fg_color=FW_PURPLE if src["badge"] == "Offiziell" else FW_SLATE,
+                             fg_color=FW_PURPLE if src["badge"] == T("Offiziell", "Official") else FW_SLATE,
                              text_color="white", font=ctk.CTkFont(size=11))
         badge.pack(side="right")
         if src["repo"] not in (None, "*"):
@@ -1718,7 +1752,7 @@ def open_multiflash_window(role=None):
                                  hover_color=FW_PURPLE, text_color="white",
                                  command=lambda r=src["repo"]: webbrowser.open(f"https://github.com/{r}"))
             link.place(relx=1.0, x=-8, y=6, anchor="ne")
-            ToolTip(link, f"github.com/{src['repo']} im Browser öffnen")
+            ToolTip(link, T(f"github.com/{src['repo']} im Browser öffnen", f"Open github.com/{src['repo']} in the browser"))
         for w in (card, t, line, o, badge):
             w.bind("<Button-1>", lambda e, s=src: select_source(s))
         src_cards[src["id"]] = card
@@ -1727,25 +1761,25 @@ def open_multiflash_window(role=None):
                                       command=lambda v: set_role("dongle" if v == "Dongle" else "tracker"))
     role_seg.set("Tracker")
     role_seg.pack(fill="x", padx=10, pady=(12, 0))
-    board_menu = ctk.CTkOptionMenu(col_board, values=["Keine Quelle ausgewählt"], state="disabled",
+    board_menu = ctk.CTkOptionMenu(col_board, values=[T("Keine Quelle ausgewählt", "No source selected")], state="disabled",
                                    command=lambda v: set_board(board_map.get(v)))
-    board_menu.set("Keine Quelle ausgewählt")
+    board_menu.set(T("Keine Quelle ausgewählt", "No source selected"))
     board_menu.pack(fill="x", padx=10, pady=12)
 
     def pick_file():
-        path = filedialog.askopenfilename(parent=win, title="UF2-Datei wählen", filetypes=[("UF2 files", "*.uf2")])
+        path = filedialog.askopenfilename(parent=win, title=T("UF2-Datei wählen", "Choose UF2 file"), filetypes=[(T("UF2-Dateien", "UF2 files"), "*.uf2")])
         if path:
             st["file"] = path
             file_btn.configure(text=os.path.basename(path))
             update_next1()
 
-    file_btn = ctk.CTkButton(col_board, text="Datei wählen…", command=pick_file)
+    file_btn = ctk.CTkButton(col_board, text=T("Datei wählen…", "Choose file…"), command=pick_file)
 
-    ver_menu = ctk.CTkOptionMenu(col_ver, values=["Keine Quelle ausgewählt"], state="disabled",
+    ver_menu = ctk.CTkOptionMenu(col_ver, values=[T("Keine Quelle ausgewählt", "No source selected")], state="disabled",
                                  command=lambda v: select_version(v))
-    ver_menu.set("Keine Quelle ausgewählt")
+    ver_menu.set(T("Keine Quelle ausgewählt", "No source selected"))
     ver_menu.pack(fill="x", padx=10, pady=12)
-    ctk.CTkLabel(col_ver, text="Der Dongle muss dieselbe\nVersion haben.", text_color=FW_DIM,
+    ctk.CTkLabel(col_ver, text=T("Der Dongle muss dieselbe\nVersion haben.", "The dongle must have the\nsame version."), text_color=FW_DIM,
                  justify="left").pack(anchor="w", padx=10, pady=(0, 10))
 
     def next1():
@@ -1775,8 +1809,8 @@ def open_multiflash_window(role=None):
         if src["repo"] is None:
             board_menu.pack_forget()
             file_btn.pack(fill="x", padx=10, pady=12)
-            ver_menu.configure(values=["Eigene Datei"], state="disabled")
-            ver_menu.set("Eigene Datei")
+            ver_menu.configure(values=[T("Eigene Datei", "Own file")], state="disabled")
+            ver_menu.set(T("Eigene Datei", "Own file"))
             update_next1()
             return
         st["file"] = None
@@ -1784,7 +1818,7 @@ def open_multiflash_window(role=None):
         board_menu.pack(fill="x", padx=10, pady=12)
         for m in (board_menu, ver_menu):
             m.configure(state="disabled")
-            m.set("Lade…")
+            m.set(T("Lade…", "Loading…"))
         update_next1()
 
         def work():
@@ -1800,7 +1834,7 @@ def open_multiflash_window(role=None):
                         continue
                     if rels:
                         merged += [dict(a, src=other, tag=rels[0]["tag"]) for a in rels[0]["assets"]]
-                rels = [{"tag": "neueste je Quelle", "assets": merged}] if merged else []
+                rels = [{"tag": T("neueste je Quelle", "newest per source"), "assets": merged}] if merged else []
                 err = None if merged else err
             else:
                 try:
@@ -1817,7 +1851,7 @@ def open_multiflash_window(role=None):
             return
         st["releases"] = rels
         if err or not rels:
-            ver_menu.set("Fehler beim Laden" if err else "Keine Firmware gefunden")
+            ver_menu.set(T("Fehler beim Laden", "Error while loading") if err else T("Keine Firmware gefunden", "No firmware found"))
             board_menu.set("–")
             if err:
                 append_text(f"[Firmware-Tool] {src['repo']}: {err}\n", "error")
@@ -1825,7 +1859,7 @@ def open_multiflash_window(role=None):
             return
         ver_map.clear()
         for k, rel in enumerate(rels):
-            ver_map[rel["tag"] + ("  (stabil)" if rel.get("stable") and src["repo"] != "*" else "")] = rel
+            ver_map[rel["tag"] + (T("  (stabil)", "  (stable)") if rel.get("stable") and src["repo"] != "*" else "")] = rel
         labels = list(ver_map)
         ver_menu.configure(values=labels, state="normal")
         ver_menu.set(labels[0])
@@ -1836,7 +1870,7 @@ def open_multiflash_window(role=None):
         src = st["source"]
         if rel is not None and rel.get("assets") is None:
             board_menu.configure(state="disabled")
-            board_menu.set("Lade…")
+            board_menu.set(T("Lade…", "Loading…"))
 
             def work():
                 try:
@@ -1875,8 +1909,8 @@ def open_multiflash_window(role=None):
         board_map.clear()
         board_map.update({b.replace("_", " "): b for b in boards})
         if not boards:
-            board_menu.configure(values=["Keine für diesen Gerätetyp"], state="disabled")
-            board_menu.set("Keine für diesen Gerätetyp")
+            board_menu.configure(values=[T("Keine für diesen Gerätetyp", "None for this device type")], state="disabled")
+            board_menu.set(T("Keine für diesen Gerätetyp", "None for this device type"))
             set_board(None)
             return
         pick = st["board"] if st["board"] in boards else None
@@ -1893,7 +1927,7 @@ def open_multiflash_window(role=None):
         set_board(pick)
 
     # ---------- 2: Board konfigurieren ----------
-    f2 = make_step(1, "Konfiguriere dein Board", "Bauweise deines Trackers")
+    f2 = make_step(1, T("Konfiguriere dein Board", "Configure your board"), T("Bauweise deines Trackers", "How your tracker is built"))
     f2.grid_columnconfigure(0, weight=1)
 
     def enter_config():
@@ -1905,7 +1939,7 @@ def open_multiflash_window(role=None):
         saved_opts = frozenset(saved.get("options", []))
         # Vorschlag: gespeicherte Wahl, sonst die schlichteste Bauweise ohne Sonderplatine (Bao/Chrysalis)
         base = saved_opts if saved.get("board") == st["board"] and saved_opts in sets else \
-            min(sets, key=lambda o: (len(o - {"Sleep"}) + (0 if "Sleep" in o else 1)
+            min(sets, key=lambda o: (len(o - {T("Schlafen", "Sleep")}) + (0 if T("Schlafen", "Sleep") in o else 1)
                                      + 10 * any(t in ("Chrysalis", "Bao") or t.startswith("StackedSmol") for t in o),
                                      sorted(o)))
         fixed = frozenset.intersection(*sets)
@@ -1930,7 +1964,7 @@ def open_multiflash_window(role=None):
 
         def choice_text(key, t):
             return FW_CHOICE_LABELS.get(key, {}).get(t) or \
-                (f"Stacked Smol ({t[12:]})" if t and t.startswith("StackedSmol_") else t) or "Platinen-Standard"
+                (f"Stacked Smol ({t[12:]})" if t and t.startswith("StackedSmol_") else t) or T("Platinen-Standard", "Board default")
 
         # Was sich gegenueber der Auswahl aendert, z.B. "Taster an SW0 aus"
         def describe(chosen, opts):
@@ -1939,7 +1973,7 @@ def open_multiflash_window(role=None):
                 a = next((t for t in chosen if group_of(t)[0] == key), None)
                 b = next((t for t in opts if group_of(t)[0] == key), None)
                 if a != b:
-                    parts.append(f"{label} {'an' if b else 'aus'}" if len(toks) == 1 else f"{label}: {choice_text(key, b)}")
+                    parts.append(T(f"{label} {'an' if b else 'aus'}", f"{label} {'on' if b else 'off'}") if len(toks) == 1 else f"{label}: {choice_text(key, b)}")
             return ", ".join(parts)
 
         def apply_options(opts):
@@ -1970,11 +2004,11 @@ def open_multiflash_window(role=None):
                         var.set(v is not None) if tok else var.set(v or "")
                     if tok and key in box_widgets:
                         if not locked:
-                            text = "An"
+                            text = T("An", "On")
                         elif key == "sw0" and variant and variant.startswith("StackedSmol"):
-                            text = "An – beim Stacked Smol eingebaut (P0.06)"
+                            text = T("An – beim Stacked Smol eingebaut (P0.06)", "On – built into the Stacked Smol (P0.06)")
                         else:
-                            text = f"An – bei {vname} immer" if var.get() else f"Aus – gibt es bei {vname} nicht"
+                            text = T(f"An – bei {vname} immer", f"On – always with {vname}") if var.get() else T(f"Aus – gibt es bei {vname} nicht", f"Off – not available with {vname}")
                         box_widgets[key].configure(state="disabled" if locked else "normal", text=text)
                     elif not tok:
                         for rb, available in radio_widgets.get(key, []):
@@ -1995,13 +2029,13 @@ def open_multiflash_window(role=None):
             st["asset"] = match[0] if match else None
             if match:
                 a = match[0]
-                date = f" · Datei vom {a['date'][8:10]}.{a['date'][5:7]}.{a['date'][:4]}" if a.get("date") else ""
-                result.configure(text=f"✅  {a['name']}\n      Quelle: {a['src']['owner']} / {a['src']['name']} · {a['tag']}{date}",
+                date = T(f" · Datei vom {a['date'][8:10]}.{a['date'][5:7]}.{a['date'][:4]}", f" · file from {a['date'][:10]}") if a.get("date") else ""
+                result.configure(text=T(f"✅  {a['name']}\n      Quelle: {a['src']['owner']} / {a['src']['name']} · {a['tag']}{date}", f"✅  {a['name']}\n      Source: {a['src']['owner']} / {a['src']['name']} · {a['tag']}{date}"),
                                  text_color=("green", "lime"))
                 nxt.configure(state="normal")
             else:
-                tip = "" if st["source"]["id"] == "all" else "\n      Tipp: „In allen Quellen suchen“ findet oft mehr Kombinationen."
-                result.configure(text="❌  Diese Kombination gibt es in dieser Version nicht." + tip, text_color="red")
+                tip = "" if st["source"]["id"] == "all" else T("\n      Tipp: „In allen Quellen suchen“ findet oft mehr Kombinationen.", "\n      Tip: “Search all sources” often finds more combinations.")
+                result.configure(text=T("❌  Diese Kombination gibt es in dieser Version nicht.", "❌  This combination does not exist in this version.") + tip, text_color="red")
                 nxt.configure(state="disabled")
             apply_led_visibility()
             # Bei fehlender Kombination die naechstliegenden vorhandenen Dateien anbieten
@@ -2019,10 +2053,10 @@ def open_multiflash_window(role=None):
                         st["auto_next"] = True
                         go(0)
                         select_source(next(x for x in fw_sources() if x["id"] == "all"))
-                    ctk.CTkButton(suggest, text="🔍 In allen Quellen suchen", fg_color=FW_PURPLE,
+                    ctk.CTkButton(suggest, text=T("🔍 In allen Quellen suchen", "🔍 Search all sources"), fg_color=FW_PURPLE,
                                   hover_color=FW_PURPLE_H, text_color="white",
                                   command=search_all).pack(anchor="w", pady=(6, 2))
-                ctk.CTkLabel(suggest, text="Am nächsten dran gibt es:", anchor="w").pack(fill="x", pady=(6, 2))
+                ctk.CTkLabel(suggest, text=T("Am nächsten dran gibt es:", "Closest available:"), anchor="w").pack(fill="x", pady=(6, 2))
                 for opts in near:
                     ctk.CTkButton(suggest, text=describe(chosen, opts), anchor="w",
                                   command=lambda o=opts: apply_options(o)).pack(anchor="w", pady=2)
@@ -2043,7 +2077,7 @@ def open_multiflash_window(role=None):
                 row=r, column=0, sticky="nw", padx=12, pady=(10, 0))
             if len(toks) == 1:
                 var = tk.BooleanVar(value=current is not None)
-                box_widgets[key] = ctk.CTkCheckBox(box, text="An", variable=var, command=update_result)
+                box_widgets[key] = ctk.CTkCheckBox(box, text=T("An", "On"), variable=var, command=update_result)
                 box_widgets[key].grid(row=r, column=1, sticky="w", pady=(10, 0))
                 choice_vars[key] = (var, toks[0])
             else:
@@ -2055,7 +2089,7 @@ def open_multiflash_window(role=None):
                 for i, t in enumerate(shown):
                     available = t in choices
                     text = names.get(t) or (f"Stacked Smol ({t[12:]})" if t and t.startswith("StackedSmol_") else t)
-                    text += "" if available else " – nicht in dieser Quelle"
+                    text += "" if available else T(" – nicht in dieser Quelle", " – not in this source")
                     rb = ctk.CTkRadioButton(fr, text=text, variable=var, value=t or "", command=update_result,
                                             state="normal" if available else "disabled")
                     rb.grid(row=i // 3, column=i % 3, sticky="w", padx=(0, 14), pady=2)
@@ -2063,7 +2097,7 @@ def open_multiflash_window(role=None):
                 choice_vars[key] = (var, None)
             r += 2
         if r == 0:
-            ctk.CTkLabel(box, text="Für dieses Board gibt es nur eine Bauweise.", text_color=FW_DIM).grid(
+            ctk.CTkLabel(box, text=T("Für dieses Board gibt es nur eine Bauweise.", "There is only one build for this board."), text_color=FW_DIM).grid(
                 row=0, column=0, sticky="w", padx=12, pady=10)
         update_result()
         if st["role"] == "tracker":
@@ -2093,26 +2127,27 @@ def open_multiflash_window(role=None):
         saved = settings.get("fw_settings", {})
         parent.grid_columnconfigure(0, weight=1)
         holder = ctk.CTkFrame(parent, fg_color=FW_CARD, corner_radius=10)
-        toggle = ctk.CTkButton(parent, text="▸ Firmware-Einstellungen (optional)", anchor="w", fg_color="transparent",
+        toggle = ctk.CTkButton(parent, text=T("▸ Firmware-Einstellungen (optional)", "▸ Firmware settings (optional)"), anchor="w", fg_color="transparent",
                                hover_color=FW_CARD2, font=ctk.CTkFont(weight="bold"))
         toggle.grid(row=0, column=0, sticky="ew")
-        ctk.CTkLabel(parent, text="Werden nach dem Flashen in jeden Tracker geschrieben. „Standard“ lässt den Wert "
-                                  "unverändert. Geht nur mit Firmware, die Einstellungen kennt (offizielle Firmware).",
+        ctk.CTkLabel(parent, text=T("Werden nach dem Flashen in jeden Tracker geschrieben. „Standard“ lässt den Wert "
+                                  "unverändert. Geht nur mit Firmware, die Einstellungen kennt (offizielle Firmware).", "Written to every tracker after flashing. “Default” leaves the value unchanged. Only works"
+            " with firmware that supports settings (official firmware)."),
                      text_color=FW_DIM, anchor="w", justify="left", wraplength=700).grid(row=1, column=0, sticky="w", padx=4)
 
         def flip():
             if holder.winfo_ismapped():
                 holder.grid_forget()
-                toggle.configure(text="▸ Firmware-Einstellungen (optional)")
+                toggle.configure(text=T("▸ Firmware-Einstellungen (optional)", "▸ Firmware settings (optional)"))
             else:
                 holder.grid(row=2, column=0, sticky="ew", pady=(6, 0))
-                toggle.configure(text="▾ Firmware-Einstellungen (optional)")
+                toggle.configure(text=T("▾ Firmware-Einstellungen (optional)", "▾ Firmware settings (optional)"))
         toggle.configure(command=flip)
         if saved:
             flip()
 
         reset_var = tk.BooleanVar(value=bool(settings.get("fw_settings_reset", False)))
-        ctk.CTkCheckBox(holder, text="Vorher alle Einstellungen im Tracker auf Standard zurücksetzen",
+        ctk.CTkCheckBox(holder, text=T("Vorher alle Einstellungen im Tracker auf Standard zurücksetzen", "Reset all tracker settings to default first"),
                         variable=reset_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=12, pady=(10, 4))
         setting_widgets["__reset__"] = reset_var
         row = 1
@@ -2129,12 +2164,12 @@ def open_multiflash_window(role=None):
                 cell = ctk.CTkFrame(holder, fg_color="transparent")
                 cell.grid(row=row, column=1, sticky="w", pady=(4, 0))
                 if kind == "bool":
-                    std = "Standard"
-                    w = ctk.CTkSegmentedButton(cell, values=[std, "An", "Aus"])
-                    w.set({True: "An", False: "Aus"}.get(saved.get(name), std))
+                    std = T("Standard", "Default")
+                    w = ctk.CTkSegmentedButton(cell, values=[std, T("An", "On"), T("Aus", "Off")])
+                    w.set({True: T("An", "On"), False: T("Aus", "Off")}.get(saved.get(name), std))
                     w.pack(side="left")
                 elif kind == "enum":
-                    std = "Standard"
+                    std = T("Standard", "Default")
                     w = ctk.CTkSegmentedButton(cell, values=[std] + list(factor.values()))
                     w.set(factor.get(saved.get(name), std))
                     w.pack(side="left")
@@ -2143,24 +2178,24 @@ def open_multiflash_window(role=None):
                     if name in saved:
                         w.insert(0, str(saved[name]))
                     w.pack(side="left")
-                    ctk.CTkLabel(cell, text=f"{unit}   (leer = Standard, meist {default} {unit})", text_color=FW_DIM).pack(side="left", padx=6)
+                    ctk.CTkLabel(cell, text=T(f"{unit}   (leer = Standard, meist {default} {unit})", f"{unit}   (empty = default, usually {default} {unit})"), text_color=FW_DIM).pack(side="left", padx=6)
                 else:  # color
                     w = {"rgb": saved.get(name)}
-                    swatch = ctk.CTkButton(cell, text="Farbe wählen…", width=130)
+                    swatch = ctk.CTkButton(cell, text=T("Farbe wählen…", "Choose color…"), width=130)
 
                     def pick(w=w, swatch=swatch):
                         from tkinter import colorchooser
-                        c = colorchooser.askcolor(parent=win, title="LED-Farbe")
+                        c = colorchooser.askcolor(parent=win, title=T("LED-Farbe", "LED color"))
                         if c and c[0]:
                             w["rgb"] = [int(v) for v in c[0]]
                             swatch.configure(fg_color=c[1], text=c[1])
 
                     def clear(w=w, swatch=swatch):
                         w["rgb"] = None
-                        swatch.configure(fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"], text="Farbe wählen…")
+                        swatch.configure(fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"], text=T("Farbe wählen…", "Choose color…"))
                     swatch.configure(command=pick)
                     swatch.pack(side="left")
-                    ctk.CTkButton(cell, text="Standard", width=80, fg_color="transparent", border_width=1,
+                    ctk.CTkButton(cell, text=T("Standard", "Default"), width=80, fg_color="transparent", border_width=1,
                                   border_color=FW_SLATE, command=clear).pack(side="left", padx=6)
                     if w["rgb"]:
                         hexc = "#%02x%02x%02x" % tuple(w["rgb"])
@@ -2187,8 +2222,8 @@ def open_multiflash_window(role=None):
             kind, w, factor = entry
             if kind == "bool":
                 v = w.get()
-                if v in ("An", "Aus"):
-                    values[name] = v == "An"
+                if v in (T("An", "On"), T("Aus", "Off")):
+                    values[name] = v == T("An", "On")
                     cmds.append(f"write_config {name} {1 if v == 'An' else 0}")
             elif kind == "enum":
                 inv = {label: key for key, label in factor.items()}
@@ -2201,7 +2236,7 @@ def open_multiflash_window(role=None):
                     try:
                         num = float(text)
                     except ValueError:
-                        return None, f"„{text}“ ist keine Zahl."
+                        return None, T(f"„{text}“ ist keine Zahl.", f"“{text}” is not a number.")
                     values[name] = int(num) if num.is_integer() else num
                     cmds.append(f"write_config {name} {int(round(num * factor))}")
             elif kind == "color" and w["rgb"] and led_state() is not False:
@@ -2214,7 +2249,7 @@ def open_multiflash_window(role=None):
         return cmds, None
 
     # ---------- 3: Geraete waehlen ----------
-    f3 = make_step(2, "Geräte auswählen", "Welche angesteckten Geräte die Firmware bekommen")
+    f3 = make_step(2, T("Geräte auswählen", "Select devices"), T("Welche angesteckten Geräte die Firmware bekommen", "Which plugged-in devices get the firmware"))
     f3.grid_columnconfigure(0, weight=1)
     list_frame = ctk.CTkScrollableFrame(f3, height=220, fg_color=FW_CARD, corner_radius=10)
     list_frame.grid(row=0, column=0, sticky="ew", padx=6)
@@ -2229,7 +2264,7 @@ def open_multiflash_window(role=None):
         for p in list_tracker_ports():
             lbl = port_label(p) + ("  (Dongle)" if p["receiver"] else "")
             label_to_port[lbl] = p
-        values = list(label_to_port.keys()) or ["Keine Ports gefunden"]
+        values = list(label_to_port.keys()) or [T("Keine Ports gefunden", "No ports found")]
         for r in rows:
             r["menu"].configure(values=values)
         return values
@@ -2255,7 +2290,7 @@ def open_multiflash_window(role=None):
         if label is None:
             used = {r["var"].get() for r in rows}
             free = [v for v in values if v not in used and v in label_to_port and role_matches(label_to_port[v]["receiver"])]
-            label = free[0] if free else "Kein passendes Gerät gefunden"
+            label = free[0] if free else T("Kein passendes Gerät gefunden", "No matching device found")
         frame = ctk.CTkFrame(list_frame, fg_color="transparent")
         frame.pack(fill="x", pady=2)
         r = {"frame": frame, "var": tk.StringVar(value=label), "dev": None}
@@ -2286,36 +2321,36 @@ def open_multiflash_window(role=None):
             info = next((i for i in infos if p and i.device == p["device"]), None)
             if not info:
                 r["dev"] = None
-                set_status(r, "kein Port", "red")
+                set_status(r, T("kein Port", "no port"), "red")
                 continue
             dev = get_or_add_device(info)
             dev.manual_off = False
             r["dev"] = dev
             if dev.connected or connect_device(dev, ask=not asked, parent=win):
                 if role_matches(dev.is_receiver):
-                    set_status(r, f"verbunden ({device_name(dev)})", "green")
+                    set_status(r, T(f"verbunden ({device_name(dev)})", f"connected ({device_name(dev)})"), "green")
                 else:
                     # z.B. ProMicro mit Tracker-Firmware soll Dongle werden (oder umgekehrt)
-                    set_status(r, f"verbunden ({device_name(dev)}) – wird zum "
-                                  f"{'Dongle' if st['role'] == 'dongle' else 'Tracker'} umgeflasht", "orange")
+                    set_status(r, T(f"verbunden ({device_name(dev)}) – wird zum "
+                                  f"{'Dongle' if st['role'] == 'dongle' else 'Tracker'} umgeflasht", f"connected ({device_name(dev)}) – will be reflashed as {'dongle' if st['role'] == 'dongle' else 'tracker'}"), "orange")
                 continue
             e = dev.last_error
             if e is not None and is_permission_error(e):
                 asked = True
-            set_status(r, "keine Berechtigung" if e is not None and is_permission_error(e) else f"Fehler: {e}", "red")
+            set_status(r, T("keine Berechtigung", "no permission") if e is not None and is_permission_error(e) else T(f"Fehler: {e}", f"Error: {e}"), "red")
         update_next3()
 
     def valid_targets():
         return [r for r in rows if r["dev"] and r["dev"].connected]
 
-    b_add = ctk.CTkButton(dev_bar, text="+ Gerät", width=90, command=add_row)
+    b_add = ctk.CTkButton(dev_bar, text=T("+ Gerät", "+ Device"), width=90, command=add_row)
     b_add.pack(side="left", padx=(0, 5))
-    b_all = ctk.CTkButton(dev_bar, text="Alle erkannten", width=120, command=add_all_detected)
+    b_all = ctk.CTkButton(dev_bar, text=T("Alle erkannten", "All detected"), width=120, command=add_all_detected)
     b_all.pack(side="left", padx=5)
-    b_conn = ctk.CTkButton(dev_bar, text="Alle verbinden", width=120, command=connect_all)
+    b_conn = ctk.CTkButton(dev_bar, text=T("Alle verbinden", "Connect all"), width=120, command=connect_all)
     b_conn.pack(side="left", padx=5)
-    ToolTip(b_add, "Weiteres Gerät hinzufügen")
-    ToolTip(b_all, "Alle angesteckten Geräte dieses Typs übernehmen")
+    ToolTip(b_add, T("Weiteres Gerät hinzufügen", "Add another device"))
+    ToolTip(b_all, T("Alle angesteckten Geräte dieses Typs übernehmen", "Take all plugged-in devices of this type"))
     boot_info = ctk.CTkLabel(f3, text="", anchor="w", text_color="orange")
     boot_info.grid(row=3, column=0, sticky="w", padx=6, pady=(6, 0))
     next3_btn = nav(f3, 2, next_cmd=lambda: go(3))
@@ -2330,7 +2365,7 @@ def open_multiflash_window(role=None):
 
     def update_next3():
         n = bootloader_count()
-        boot_info.configure(text=f"{n} Gerät(e) im Bootloader – werden in Schritt 5 direkt mitgeflasht" if n else "")
+        boot_info.configure(text=T(f"{n} Gerät(e) im Bootloader – werden in Schritt 5 direkt mitgeflasht", f"{n} device(s) in bootloader – will be flashed directly in step 5") if n else "")
         next3_btn.configure(state="normal" if valid_targets() or n else "disabled")
 
     def enter_devices():
@@ -2345,7 +2380,7 @@ def open_multiflash_window(role=None):
         update_next3()
 
     # ---------- 4: Flash-Methode ----------
-    f4 = make_step(3, "Flash-Methode", "Wie die Firmware auf das Gerät kommt")
+    f4 = make_step(3, T("Flash-Methode", "Flash method"), T("Wie die Firmware auf das Gerät kommt", "How the firmware gets onto the device"))
     f4.grid_columnconfigure(0, weight=1)
 
     def enter_method():
@@ -2355,31 +2390,34 @@ def open_multiflash_window(role=None):
         box = ctk.CTkFrame(f4, fg_color=FW_CARD, corner_radius=10)
         box.grid(row=0, column=0, sticky="ew", padx=6)
         method = tk.StringVar(value="uf2" if is_uf2 else "serial")
-        ctk.CTkRadioButton(box, text="UF2-Laufwerk – Gerät startet in den Bootloader, die Datei wird kopiert",
+        ctk.CTkRadioButton(box, text=T("UF2-Laufwerk – Gerät startet in den Bootloader, die Datei wird kopiert", "UF2 drive – the device starts its bootloader, the file is copied"),
                            variable=method, value="uf2", state="normal" if is_uf2 else "disabled").pack(anchor="w", padx=12, pady=(10, 4))
-        ctk.CTkRadioButton(box, text="Seriell (Nordic-Bootloader) – für .hex, z. B. Holyiot-, eByte-, Nordic-Dongle",
+        ctk.CTkRadioButton(box, text=T("Seriell (Nordic-Bootloader) – für .hex, z. B. Holyiot-, eByte-, Nordic-Dongle", "Serial (Nordic bootloader) – for .hex, e.g. Holyiot, eByte, Nordic dongle"),
                            variable=method, value="serial", state="disabled" if is_uf2 else "normal").pack(anchor="w", padx=12, pady=(4, 10))
         if st["role"] == "tracker":
-            ctk.CTkCheckBox(box, text="Kopplungsdaten vorher löschen (danach neu koppeln)",
+            ctk.CTkCheckBox(box, text=T("Kopplungsdaten vorher löschen (danach neu koppeln)", "Clear pairing data first (pair again afterwards)"),
                             variable=clear_var).pack(anchor="w", padx=12, pady=(0, 10))
-        nxt = nav(f4, 2, next_cmd=lambda: go(4), next_text="Weiter zum Flashen")
+        nxt = nav(f4, 2, next_cmd=lambda: go(4), next_text=T("Weiter zum Flashen", "Continue to flashing"))
         nxt.configure(state="normal")
         if not is_uf2:
             hexbox = ctk.CTkFrame(f4, fg_color=FW_CARD, corner_radius=10)
             hexbox.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
             ctk.CTkLabel(hexbox, text=(
-                "Beim HolyIOT-21017 bittet dich die App, den mitgelieferten Magneten an die LED zu halten. Andere "
+                T("Beim HolyIOT-21017 bittet dich die App, den mitgelieferten Magneten an die LED zu halten. Andere "
                 "Dongles schickt sie per „dfu“ in den Nordic-Bootloader, sonst von Hand (eByte: rechter Knopf · "
                 "Nordic-Dongle: seitlicher Knopf). Die LED pulsiert dann, und die App überträgt die Firmware.\n"
-                "Falls es nicht klappt, geht es weiterhin mit nRF Connect („Programmer“)."),
+                "Falls es nicht klappt, geht es weiterhin mit nRF Connect („Programmer“).", "For the HolyIOT-21017 the app asks you to hold the included magnet to the LED. Other"
+                    " dongles are sent into the Nordic bootloader with “dfu”, otherwise by hand (eByte: right"
+                    " button · Nordic dongle: side button). The LED then pulses and the app transfers the"
+                    " firmware.\nIf it does not work, nRF Connect (“Programmer”) still works.")),
                 anchor="w", justify="left", wraplength=700).pack(anchor="w", padx=12, pady=(10, 6))
-            ctk.CTkButton(hexbox, text="Anleitung mit nRF Connect ↗",
+            ctk.CTkButton(hexbox, text=T("Anleitung mit nRF Connect ↗", "Guide with nRF Connect ↗"),
                           command=lambda: webbrowser.open(
                               "https://docs.slimevr.dev/smol-slimes/firmware/smol-flashing-firmware.html")).pack(
                 anchor="w", padx=12, pady=(0, 10))
 
     # ---------- 5: Flashen ----------
-    f5 = make_step(4, "Flashen", "Firmware aufspielen")
+    f5 = make_step(4, T("Flashen", "Flash"), T("Firmware aufspielen", "Install firmware"))
     f5.grid_columnconfigure(0, weight=1)
     flash_ctl = {}
 
@@ -2388,15 +2426,15 @@ def open_multiflash_window(role=None):
             w.destroy()
         targets = valid_targets()
         src = st["asset"].get("src") or st["source"]
-        version = st["asset"].get("tag") or "eigene Datei"
+        version = st["asset"].get("tag") or T("eigene Datei", "own file")
         cmds, _ = collect_settings()
-        extra = f"\nEinstellungen:  {len(cmds or [])} Befehl(e) nach dem Flashen" if cmds else ""
+        extra = T(f"\nEinstellungen:  {len(cmds or [])} Befehl(e) nach dem Flashen", f"\nSettings:  {len(cmds or [])} command(s) after flashing") if cmds else ""
         box = ctk.CTkFrame(f5, fg_color=FW_CARD, corner_radius=10)
         box.grid(row=0, column=0, sticky="ew", padx=6)
-        ctk.CTkLabel(box, text=f"Firmware:  {st['asset']['name']}\nQuelle:  {src['owner']} / {src['name']}  ·  {version}{extra}",
+        ctk.CTkLabel(box, text=T(f"Firmware:  {st['asset']['name']}\nQuelle:  {src['owner']} / {src['name']}  ·  {version}{extra}", f"Firmware:  {st['asset']['name']}\nSource:  {src['owner']} / {src['name']}  ·  {version}{extra}"),
                      anchor="w", justify="left").pack(anchor="w", padx=12, pady=(10, 6))
         for r in targets:
-            r["status2"] = ctk.CTkLabel(box, text=f"{device_name(r['dev'])}: bereit", anchor="w")
+            r["status2"] = ctk.CTkLabel(box, text=T(f"{device_name(r['dev'])}: bereit", f"{device_name(r['dev'])}: ready"), anchor="w")
             r["status2"].pack(anchor="w", padx=24)
         # Schon im Bootloader steckende Geraete (UF2-Laufwerk bzw. Nordic-Bootloader) werden direkt mitgeflasht
         pre = []
@@ -2404,33 +2442,33 @@ def open_multiflash_window(role=None):
             for port in nordic_bootloader_ports():
                 line = ctk.CTkFrame(box, fg_color="transparent")
                 line.pack(anchor="w", padx=24)
-                ctk.CTkLabel(line, text=f"Im Nordic-Bootloader ({port.device}):", anchor="w").pack(side="left")
-                lbl = ctk.CTkLabel(line, text=" bereit – wird direkt beschrieben", anchor="w")
+                ctk.CTkLabel(line, text=T(f"Im Nordic-Bootloader ({port.device}):", f"In Nordic bootloader ({port.device}):"), anchor="w").pack(side="left")
+                lbl = ctk.CTkLabel(line, text=T(" bereit – wird direkt beschrieben", " ready – will be written directly"), anchor="w")
                 lbl.pack(side="left")
                 pre.append({"nordic": port.device, "dev": None, "status": lbl, "status2": None,
                             "drive": {"serial": port.serial_number or "", "location": "", "root": ""}})
         for d in (bootloader_drives() if st["asset"]["ext"] == "uf2" else []):
             line = ctk.CTkFrame(box, fg_color="transparent")
             line.pack(anchor="w", padx=24)
-            name = f"Im Bootloader ({d['serial'] or os.path.basename(d['root'].rstrip(os.sep)) or d['root']})"
+            name = T(f"Im Bootloader ({d['serial'] or os.path.basename(d['root'].rstrip(os.sep)) or d['root']})", f"In bootloader ({d['serial'] or os.path.basename(d['root'].rstrip(os.sep)) or d['root']})")
             ctk.CTkLabel(line, text=f"{name}:", anchor="w").pack(side="left")
-            lbl = ctk.CTkLabel(line, text=" bereit – wird direkt beschrieben", anchor="w")
+            lbl = ctk.CTkLabel(line, text=T(" bereit – wird direkt beschrieben", " ready – will be written directly"), anchor="w")
             lbl.pack(side="left")
             pre.append({"drive": d, "dev": None, "status": lbl, "status2": None})
         info = ctk.CTkLabel(f5, text="", anchor="w", text_color=FW_DIM)
         info.grid(row=1, column=0, sticky="ew", padx=6, pady=(8, 0))
         bar = ctk.CTkFrame(f5, fg_color="transparent")
         bar.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        back = ctk.CTkButton(bar, text="Zurück", width=100, fg_color="transparent", border_width=1,
+        back = ctk.CTkButton(bar, text=T("Zurück", "Back"), width=100, fg_color="transparent", border_width=1,
                              border_color=FW_SLATE, command=go_back)
         back.pack(side="left")
-        start = ctk.CTkButton(bar, text="⬇ Flashen starten", width=180, fg_color="green", hover_color="#006400",
+        start = ctk.CTkButton(bar, text=T("⬇ Flashen starten", "⬇ Start flashing"), width=180, fg_color="green", hover_color="#006400",
                               command=lambda: flash_start(targets, pre))
         start.pack(side="right")
         flash_ctl.update(info=info, start=start, back=back)
 
         # Solange nicht geflasht wird: pruefen, ob die Geraete noch dran sind (abgezogen -> Fehler statt nichts)
-        watch_msgs = {"none": "Kein Gerät verbunden – Gerät anstecken und in Schritt 3 verbinden."}
+        watch_msgs = {"none": T("Kein Gerät verbunden – Gerät anstecken und in Schritt 3 verbinden.", "No device connected – plug one in and connect it in step 3.")}
 
         def watch():
             if not f5.winfo_exists() or cur["i"] != 4 or st["busy"] or not start.winfo_exists():
@@ -2439,17 +2477,17 @@ def open_multiflash_window(role=None):
             for r in targets:
                 if r.get("status2") is not None and r["status2"].winfo_exists():
                     ok = r["dev"].connected
-                    r["status2"].configure(text=f"{device_name(r['dev'])}: {'bereit' if ok else 'getrennt – abgezogen?'}",
+                    r["status2"].configure(text=f"{device_name(r['dev'])}: " + (T("bereit", "ready") if ok else T("getrennt – abgezogen?", "disconnected – unplugged?")),
                                            text_color=ctk.ThemeManager.theme["CTkLabel"]["text_color"] if ok else "red")
             # Nur eigene Hinweise ueberschreiben, nicht z.B. "Abgebrochen" nach der Sicherheitsfrage
-            own = info.cget("text") in ("", watch_msgs["none"]) or info.cget("text").endswith("übersprungen.")
+            own = info.cget("text") in ("", watch_msgs["none"]) or info.cget("text").endswith(T("übersprungen.", "skipped."))
             if (not targets or len(gone) == len(targets)) and not pre:
                 info.configure(text=watch_msgs["none"], text_color="red")
                 start.configure(state="disabled")
             else:
                 if own:
                     if gone:
-                        info.configure(text=f"{len(gone)} Gerät(e) getrennt, die werden übersprungen.", text_color="orange")
+                        info.configure(text=T(f"{len(gone)} Gerät(e) getrennt, die werden übersprungen.", f"{len(gone)} device(s) disconnected, they will be skipped."), text_color="orange")
                     else:
                         info.configure(text="", text_color=FW_DIM)
                 start.configure(state="normal")
@@ -2469,7 +2507,7 @@ def open_multiflash_window(role=None):
         pre = [r for r in pre if (r.get("nordic") and any(p.device == r["nordic"] for p in nordic_bootloader_ports()))
                or (r["drive"]["root"] and os.path.isfile(os.path.join(r["drive"]["root"], "INFO_UF2.TXT")))]
         if st["busy"] or not (targets or pre):
-            flash_ctl["info"].configure(text="Kein Gerät verbunden.", text_color="red")
+            flash_ctl["info"].configure(text=T("Kein Gerät verbunden.", "No device connected."), text_color="red")
             return
         # Sicherung gegen falsche Firmware: Board der Datei mit dem Namen des Geraets vergleichen
         board = st["asset"].get("board") or st.get("board") or ""
@@ -2479,15 +2517,16 @@ def open_multiflash_window(role=None):
         if odd:
             from tkinter import messagebox
             if not messagebox.askyesno(
-                    "Passt die Firmware?",
-                    f"Die Datei ist für „{board.replace('_', ' ')}“ "
-                    f"({'Dongle' if st['role'] == 'dongle' else 'Tracker'}), aber diese Geräte melden sich anders:\n"
-                    + "\n".join(f"– {n}" for n in odd) + "\n\nTrotzdem flashen?", default="no", parent=win):
-                flash_ctl["info"].configure(text="Abgebrochen – Firmware passt evtl. nicht zum Gerät.", text_color="orange")
+                    T("Passt die Firmware?", "Does the firmware fit?"),
+                    T(f"Die Datei ist für „{board.replace('_', ' ')}“ "
+                    f"({'Dongle' if st['role'] == 'dongle' else 'Tracker'}), aber diese Geräte melden sich anders:\n", f"The file is for “{board.replace('_', ' ')}” ({'dongle' if st['role'] == 'dongle' else 'tracker'}"
+                        "), but these devices report differently:\n")
+                    + "\n".join(f"– {n}" for n in odd) + T("\n\nTrotzdem flashen?", "\n\nFlash anyway?"), default="no", parent=win):
+                flash_ctl["info"].configure(text=T("Abgebrochen – Firmware passt evtl. nicht zum Gerät.", "Cancelled – the firmware may not fit the device."), text_color="orange")
                 return
         cmds, err = collect_settings()
         if err:
-            flash_ctl["info"].configure(text=f"Einstellungen: {err}", text_color="red")
+            flash_ctl["info"].configure(text=T(f"Einstellungen: {err}", f"Settings: {err}"), text_color="red")
             return
         remember_choice()
         st["busy"] = True
@@ -2503,7 +2542,7 @@ def open_multiflash_window(role=None):
         while not dev.connected and time.time() < deadline:
             time.sleep(0.5)
         if not dev.connected:
-            ui(lambda: set_status(r, "fertig ✅, Einstellungen nicht übertragen (nicht verbunden)", "orange"))
+            ui(lambda: set_status(r, T("fertig ✅, Einstellungen nicht übertragen (nicht verbunden)", "done ✅, settings not transferred (not connected)"), "orange"))
             return
         replies = []
         dev.listeners.append(replies.append)
@@ -2517,18 +2556,18 @@ def open_multiflash_window(role=None):
         ok = sum(1 for line in replies if "Updated config" in line)
         writes = sum(1 for c in cmds if c.startswith("write_config"))
         if any("Unknown command" in line for line in replies):
-            ui(lambda: set_status(r, "fertig ✅, Firmware kennt keine Einstellungen", "orange"))
+            ui(lambda: set_status(r, T("fertig ✅, Firmware kennt keine Einstellungen", "done ✅, firmware does not support settings"), "orange"))
         elif ok >= writes:
-            ui(lambda: set_status(r, f"fertig ✅, {writes} Einstellung(en) übernommen", "green"))
+            ui(lambda: set_status(r, T(f"fertig ✅, {writes} Einstellung(en) übernommen", f"done ✅, {writes} setting(s) applied"), "green"))
         else:
-            ui(lambda: set_status(r, f"fertig ✅, nur {ok} von {writes} Einstellungen bestätigt", "orange"))
+            ui(lambda: set_status(r, T(f"fertig ✅, nur {ok} von {writes} Einstellungen bestätigt", f"done ✅, only {ok} of {writes} settings confirmed"), "orange"))
 
     def flash_worker(targets, asset, clear, cmds, pre=()):
         info = flash_ctl["info"]
         try:
             fw_path = asset.get("path")
             if not fw_path:
-                ui(lambda: info.configure(text="Lade Firmware…"))
+                ui(lambda: info.configure(text=T("Lade Firmware…", "Downloading firmware…")))
                 fw_path = os.path.join(tempfile.gettempdir(), asset["name"])
                 response = requests.get(asset["url"], stream=True, timeout=30)
                 response.raise_for_status()
@@ -2550,13 +2589,13 @@ def open_multiflash_window(role=None):
                     ui(lambda: set_status(r, "Bootloader…"))
                     time.sleep(1.0)   # Antwort abwarten: Firmware ohne UF2-Unterstuetzung kennt dfu nicht
                 except Exception as e:
-                    ui(lambda e=e: set_status(r, f"dfu fehlgeschlagen: {e}", "red"))
+                    ui(lambda e=e: set_status(r, T(f"dfu fehlgeschlagen: {e}", f"dfu failed: {e}"), "red"))
                 finally:
                     if replies.append in dev.listeners:
                         dev.listeners.remove(replies.append)
                 if any("Unknown command" in line for line in replies):
                     r["manual"] = True
-                    ui(lambda: set_status(r, "Firmware kennt „dfu“ nicht – bitte jetzt viermal schnell Reset drücken", "orange"))
+                    ui(lambda: set_status(r, T("Firmware kennt „dfu“ nicht – bitte jetzt viermal schnell Reset drücken", "Firmware does not know “dfu” – please press reset four times quickly now"), "orange"))
                 disconnect_device(dev)
                 ui(refresh_sidebar)
                 ui(sync_active)
@@ -2570,7 +2609,7 @@ def open_multiflash_window(role=None):
                         os.fsync(d.fileno())
                 except OSError:
                     pass  # Der Bootloader startet oft schon waehrend des Schliessens neu
-                ui(lambda: set_status(r, "geschrieben, startet neu…"))
+                ui(lambda: set_status(r, T("geschrieben, startet neu…", "written, restarting…")))
 
             # Schluessel je Geraet: Seriennummer (gibt es auch unter Windows), sonst Steckplatz
             keys = {id(r): r["dev"].serial_number or r["dev"].location or f"#{i}" for i, r in enumerate(targets)}
@@ -2595,17 +2634,17 @@ def open_multiflash_window(role=None):
                         disconnect_device(d)
 
                 def prog(done, total):
-                    ui(lambda: set_status(r, f"überträgt … {done * 100 // total} %"))
+                    ui(lambda: set_status(r, T(f"überträgt … {done * 100 // total} %", f"transferring … {done * 100 // total} %")))
                 try:
                     nordic_flash_hex(port, fw_path, prog)
-                    ui(lambda: set_status(r, "geschrieben, startet neu…"))
+                    ui(lambda: set_status(r, T("geschrieben, startet neu…", "written, restarting…")))
                     return True
                 except Exception as e:
                     if not retried and is_permission_error(e):
-                        ui(lambda: set_status(r, "kein Zugriff auf den Bootloader – Freigabe wird eingerichtet…", "orange"))
+                        ui(lambda: set_status(r, T("kein Zugriff auf den Bootloader – Freigabe wird eingerichtet…", "no access to the bootloader – setting up permission…"), "orange"))
                         if fix_permissions_and_wait():
                             return flash_nordic(r, port, retried=True)
-                    ui(lambda e=e: set_status(r, f"Übertragung fehlgeschlagen: {e}", "red"))
+                    ui(lambda e=e: set_status(r, T(f"Übertragung fehlgeschlagen: {e}", f"Transfer failed: {e}"), "red"))
                     return False
 
             def nordic_target(r):
@@ -2616,11 +2655,12 @@ def open_multiflash_window(role=None):
                     disconnect_device(r["dev"])
                     ui(refresh_sidebar)
                     r["manual"] = True
-                    hint = "Bitte jetzt den mitgelieferten Magneten an die LED halten (die LED pulsiert dann)"
+                    hint = T("Bitte jetzt den mitgelieferten Magneten an die LED halten (die LED pulsiert dann)", "Please hold the included magnet to the LED now (the LED will pulse)")
                 else:
                     enter_bootloader(r)
-                    hint = ("Bitte Bootloader von Hand starten: eByte – rechter Knopf, Nordic-Dongle – seitlicher Knopf, "
-                            "HolyIOT – Magnet an die LED")
+                    hint = (T("Bitte Bootloader von Hand starten: eByte – rechter Knopf, Nordic-Dongle – seitlicher Knopf, "
+                            "HolyIOT – Magnet an die LED", "Please start the bootloader by hand: eByte – right button, Nordic dongle – side button,"
+                        " HolyIOT – magnet to the LED"))
                 asked, port, start = False, None, time.time()
                 while port is None and time.time() < start + 90:
                     port = next((p.device for p in nordic_bootloader_ports() if p.device not in before), None)
@@ -2629,7 +2669,7 @@ def open_multiflash_window(role=None):
                         ui(lambda: set_status(r, hint, "orange"))
                     time.sleep(0.5)
                 if port is None:
-                    ui(lambda: set_status(r, "kein Nordic-Bootloader gefunden", "red"))
+                    ui(lambda: set_status(r, T("kein Nordic-Bootloader gefunden", "no Nordic bootloader found"), "red"))
                     return False
                 time.sleep(1.0)   # Anschluss bereit werden lassen
                 return flash_nordic(r, port)
@@ -2643,7 +2683,7 @@ def open_multiflash_window(role=None):
                     if flash_nordic(r, r["nordic"]):
                         found[key] = r
                         confirmed.add(key)
-                        ui(lambda rr=r: set_status(rr, "fertig ✅ (vom Bootloader geprüft)", "green"))
+                        ui(lambda rr=r: set_status(rr, T("fertig ✅ (vom Bootloader geprüft)", "done ✅ (verified by bootloader)"), "green"))
                         # Der Bootloader hat eine andere Seriennummer als die Firmware: den Stand unter der
                         # Seriennummer merken, mit der das Geraet gleich neu auftaucht
                         new_serial, until = None, time.time() + 20
@@ -2659,7 +2699,7 @@ def open_multiflash_window(role=None):
 
             if asset.get("ext") == "hex":
                 for n, r in enumerate(targets, 1):
-                    ui(lambda n=n: info.configure(text=f"Gerät {n} von {len(targets)}…"))
+                    ui(lambda n=n: info.configure(text=T(f"Gerät {n} von {len(targets)}…", f"Device {n} of {len(targets)}…")))
                     if nordic_target(r):
                         found[keys[id(r)]] = r
             elif sys.platform.startswith("linux") and all(r["dev"].location for r in targets):
@@ -2667,7 +2707,7 @@ def open_multiflash_window(role=None):
                 before = set(find_usb_drives())
                 for r in targets:
                     enter_bootloader(r)
-                ui(lambda: info.configure(text="Warte auf die UF2-Laufwerke…"))
+                ui(lambda: info.configure(text=T("Warte auf die UF2-Laufwerke…", "Waiting for the UF2 drives…")))
                 by_loc = {r["dev"].location: r for r in targets}
                 mounts = {}
                 deadline = time.time() + (60 if any(r.get("manual") for r in targets) else 30)
@@ -2679,7 +2719,7 @@ def open_multiflash_window(role=None):
                         if mount and os.path.isfile(os.path.join(mount, "INFO_UF2.TXT")):
                             mounts[d["location"]] = mount
                     time.sleep(1)
-                ui(lambda: info.configure(text="Schreibe Firmware…"))
+                ui(lambda: info.configure(text=T("Schreibe Firmware…", "Writing firmware…")))
                 copies = []
                 seen = {d["location"]: d for d in find_usb_drives().values()}
                 for loc, r in by_loc.items():
@@ -2690,16 +2730,16 @@ def open_multiflash_window(role=None):
                         copies.append(t)
                     elif loc in seen:
                         err = next((mount_errors[d] for d in seen[loc]["devs"] if d in mount_errors), "")
-                        ui(lambda rr=r, err=err: set_status(rr, f"UF2-Laufwerk da, aber Einhängen nicht erlaubt ({err})", "red"))
+                        ui(lambda rr=r, err=err: set_status(rr, T(f"UF2-Laufwerk da, aber Einhängen nicht erlaubt ({err})", f"UF2 drive present, but mounting not allowed ({err})"), "red"))
                     else:
-                        ui(lambda rr=r: set_status(rr, "kein UF2-Laufwerk gefunden", "red"))
+                        ui(lambda rr=r: set_status(rr, T("kein UF2-Laufwerk gefunden", "no UF2 drive found"), "red"))
                 for t in copies:
                     t.join()
             else:
                 # Windows/macOS (oder Steckplatz unbekannt): einer nach dem anderen,
                 # das jeweils neu auftauchende UF2-Laufwerk gehoert zum gerade gestarteten Tracker
                 for n, r in enumerate(targets, 1):
-                    ui(lambda n=n: info.configure(text=f"Tracker {n} von {len(targets)}…"))
+                    ui(lambda n=n: info.configure(text=T(f"Tracker {n} von {len(targets)}…", f"Tracker {n} of {len(targets)}…")))
                     before = set(uf2_drive_roots())
                     enter_bootloader(r)
                     root, deadline = None, time.time() + (60 if r.get("manual") else 30)
@@ -2707,7 +2747,7 @@ def open_multiflash_window(role=None):
                         root = next((d for d in uf2_drive_roots() if d not in before), None)
                         time.sleep(0.5)
                     if root is None:
-                        ui(lambda rr=r: set_status(rr, "kein UF2-Laufwerk gefunden", "red"))
+                        ui(lambda rr=r: set_status(rr, T("kein UF2-Laufwerk gefunden", "no UF2 drive found"), "red"))
                         continue
                     found[keys[id(r)]] = r
                     copy_one(r, root)
@@ -2726,18 +2766,18 @@ def open_multiflash_window(role=None):
                     for key in (p.serial_number, (p.location or "").split(":")[0]):
                         r = waiting.pop(key, None) if key else None
                         if r:
-                            ui(lambda rr=r: set_status(rr, "fertig ✅", "green"))
+                            ui(lambda rr=r: set_status(rr, T("fertig ✅", "done ✅"), "green"))
                             stored = (r["dev"].key if r.get("dev") else "") or p.serial_number
                             ui(lambda k=stored: remember_flash(k, asset, st["role"]))
                 time.sleep(1)
             for r in waiting.values():
-                ui(lambda rr=r: set_status(rr, "geschrieben, aber nicht zurückgemeldet", "orange"))
+                ui(lambda rr=r: set_status(rr, T("geschrieben, aber nicht zurückgemeldet", "written, but did not report back"), "orange"))
 
             if cmds:
                 done_rows = [r for key, r in found.items() if key not in waiting and r.get("dev")]
                 for r in done_rows:
                     r["dev"].paused = False  # damit watch_devices sie wieder verbindet
-                ui(lambda: info.configure(text="Übertrage Einstellungen…"))
+                ui(lambda: info.configure(text=T("Übertrage Einstellungen…", "Transferring settings…")))
                 workers = [threading.Thread(target=apply_settings, args=(r, cmds), daemon=True) for r in done_rows]
                 for t in workers:
                     t.start()
@@ -2746,11 +2786,11 @@ def open_multiflash_window(role=None):
 
             total = len(targets) + len(pre)
             ok = len(found) - len(waiting)
-            ui(lambda: info.configure(text=f"{ok} von {total} fertig.",
+            ui(lambda: info.configure(text=T(f"{ok} von {total} fertig.", f"{ok} of {total} done."),
                                       text_color="green" if ok == total else "orange"))
-            ui(lambda: append_text(f"Firmware-Tool: {ok} von {total} Geräten mit {asset['name']} geflasht.\n", "success"))
+            ui(lambda: append_text(T(f"Firmware-Tool: {ok} von {total} Geräten mit {asset['name']} geflasht.\n", f"Firmware tool: {ok} of {total} devices flashed with {asset['name']}.\n"), "success"))
         except Exception as e:
-            ui(lambda e=e: info.configure(text=f"Fehler: {e}", text_color="red"))
+            ui(lambda e=e: info.configure(text=T(f"Fehler: {e}", f"Error: {e}"), text_color="red"))
         finally:
             for r in targets:
                 r["dev"].paused = False  # watch_devices verbindet sie wieder
@@ -2759,7 +2799,7 @@ def open_multiflash_window(role=None):
             def done():
                 for b in (flash_ctl["back"], b_add, b_all, b_conn):
                     b.configure(state="normal")
-                flash_ctl["start"].configure(state="normal", text="Nochmal flashen")
+                flash_ctl["start"].configure(state="normal", text=T("Nochmal flashen", "Flash again"))
             ui(done)
 
     def go(i):
@@ -2800,9 +2840,9 @@ class NordicDfuError(Exception):
 NORDIC_RES = {0x00: "InvalidCode", 0x02: "NotSupported", 0x03: "InvalidParameter", 0x04: "InsufficientResources",
               0x05: "InvalidObject", 0x06: "InvalidSignature", 0x07: "UnsupportedType",
               0x08: "OperationNotPermitted", 0x0A: "OperationFailed"}
-NORDIC_EXT = {0x05: "Firmware-Version zu niedrig", 0x06: "Hardware-Version passt nicht",
-              0x07: "SoftDevice-Anforderung passt nicht", 0x08: "Signatur erforderlich",
-              0x0C: "Prüfsumme der Firmware passt nicht", 0x0D: "zu wenig Platz"}
+NORDIC_EXT = {0x05: T("Firmware-Version zu niedrig", "Firmware version too low"), 0x06: T("Hardware-Version passt nicht", "Hardware version does not match"),
+              0x07: T("SoftDevice-Anforderung passt nicht", "SoftDevice requirement does not match"), 0x08: T("Signatur erforderlich", "Signature required"),
+              0x0C: T("Prüfsumme der Firmware passt nicht", "Firmware checksum does not match"), 0x0D: T("zu wenig Platz", "not enough space")}
 
 # Intel-HEX -> Binaerdaten wie nrfhex: ohne MBR (< 0x1000) und UICR (>= 0x10000000), Luecken 0xFF,
 # Laenge auf ganze 4-Byte-Woerter aufgerundet
@@ -2826,7 +2866,7 @@ def hex_to_app_bin(path):
                 break
     data = {a: b for a, b in data.items() if 0x1000 <= a < 0x10000000}
     if not data:
-        raise NordicDfuError("Die .hex-Datei enthält keine Anwendung")
+        raise NordicDfuError(T("Die .hex-Datei enthält keine Anwendung", "The .hex file contains no application"))
     lo, hi = min(data), max(data)
     size = ((hi - lo + 1) + 3) // 4 * 4
     out = bytearray(b"\xff" * size)
@@ -2901,14 +2941,14 @@ class NordicDfu:
         self.ser.write(_slip(payload))
         resp = self._read(timeout)
         if size is not None and resp and resp[2:3] == b"\x01" and len(resp) - 3 != size:
-            raise NordicDfuError(f"unerwartete Antwort auf Befehl 0x{payload[0]:02X} – liest ein anderes Programm "
-                                 "am Anschluss mit?")
+            raise NordicDfuError(T(f"unerwartete Antwort auf Befehl 0x{payload[0]:02X} – liest ein anderes Programm "
+                                 "am Anschluss mit?", f"unexpected reply to command 0x{payload[0]:02X} – is another program reading the port?"))
         if not resp or resp[0] != 0x60 or resp[1] != payload[0]:
-            raise NordicDfuError(f"keine passende Antwort auf Befehl 0x{payload[0]:02X}")
+            raise NordicDfuError(T(f"keine passende Antwort auf Befehl 0x{payload[0]:02X}", f"no matching reply to command 0x{payload[0]:02X}"))
         if resp[2] == 0x0B:
-            raise NordicDfuError(NORDIC_EXT.get(resp[3], f"erweiterter Fehler 0x{resp[3]:02X}"), resp[3])
+            raise NordicDfuError(NORDIC_EXT.get(resp[3], T(f"erweiterter Fehler 0x{resp[3]:02X}", f"extended error 0x{resp[3]:02X}")), resp[3])
         if resp[2] != 0x01:
-            raise NordicDfuError(NORDIC_RES.get(resp[2], f"Fehler 0x{resp[2]:02X}"))
+            raise NordicDfuError(NORDIC_RES.get(resp[2], T(f"Fehler 0x{resp[2]:02X}", f"error 0x{resp[2]:02X}")))
         return resp[3:]
 
     # Wie nrfutil "dfu usb-serial": 3 s warten, kein Ping (aeltere Nordic-Bootloader kennen ihn nicht),
@@ -2928,13 +2968,13 @@ class NordicDfu:
             offset += len(part)
         got_offset, got_crc = struct.unpack("<II", self._cmd(bytes([0x03]), size=8))
         if got_offset != offset or got_crc != crc:
-            raise NordicDfuError("Prüfsumme der Übertragung stimmt nicht")
+            raise NordicDfuError(T("Prüfsumme der Übertragung stimmt nicht", "Transfer checksum does not match"))
         return crc, offset
 
     def send(self, init_packet, app_bin):
         max_size = struct.unpack("<III", self._cmd(bytes([0x06, 0x01]), size=12))[0]
         if len(init_packet) > max_size:
-            raise NordicDfuError("Init-Paket zu groß")
+            raise NordicDfuError(T("Init-Paket zu groß", "Init packet too large"))
         self._cmd(bytes([0x01, 0x01]) + struct.pack("<L", len(init_packet)))
         self._stream(init_packet, 0, 0)
         self._cmd(bytes([0x04]))                                       # Init-Paket pruefen lassen
@@ -2968,8 +3008,10 @@ def nordic_bootloader_ports():
     return [p for p in serial.tools.list_ports.comports() if (p.vid, p.pid) == NORDIC_DFU_ID]
 
 # Firmware-Stand je Geraet: was die App zuletzt draufgeflasht hat. Grundlage fuer "Update verfuegbar".
-def de_date(iso):
-    return f"{iso[8:10]}.{iso[5:7]}.{iso[:4]}" if len(iso) >= 10 else (iso or "?")
+def de_date(iso):   # deutsch TT.MM.JJJJ, englisch JJJJ-MM-TT
+    if len(iso) < 10:
+        return iso or "?"
+    return T(f"{iso[8:10]}.{iso[5:7]}.{iso[:4]}", iso[:10])
 
 def remember_flash(key, asset, role):
     if not key or not asset.get("src") or not asset["src"].get("repo"):
@@ -3009,7 +3051,7 @@ def parse_info(lines):
         m = re.match(r"^(SlimeVR-\S+)\s+(\S+)", line)
         if m:
             d["fw"] = f"{m.group(1)} {m.group(2)}"
-        for key, label in (("board", "Board"), ("imu", "IMU"), ("paired", "Tracker ID")):
+        for key, label in (("board", "Board"), ("imu", "IMU"), (T("gekoppelt", "paired"), "Tracker ID")):
             if line.startswith(label + ": "):
                 d[key] = line[len(label) + 2:]
         m = re.match(r"^Battery: ([\d.]+)%", line)
@@ -3024,14 +3066,14 @@ def open_device_manager():
         return
     win = ctk.CTkToplevel(app, fg_color=FW_BG)
     dev_win = win
-    win.title("Geräteverwaltung")
+    win.title(T("Geräteverwaltung", "Device Manager"))
     win.geometry("1000x660")
     win.transient(app)
 
     head = ctk.CTkFrame(win, fg_color="transparent")
     head.pack(fill="x", padx=20, pady=(16, 4))
-    ctk.CTkLabel(head, text="Geräteverwaltung", font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
-    ctk.CTkLabel(head, text="Alle Dongles und Tracker auf einen Blick", text_color=FW_DIM).pack(anchor="w")
+    ctk.CTkLabel(head, text=T("Geräteverwaltung", "Device Manager"), font=ctk.CTkFont(size=22, weight="bold")).pack(anchor="w")
+    ctk.CTkLabel(head, text=T("Alle Dongles und Tracker auf einen Blick", "All dongles and trackers at a glance"), text_color=FW_DIM).pack(anchor="w")
 
     bar = ctk.CTkFrame(win, fg_color="transparent")
     bar.pack(fill="x", padx=16, pady=(8, 4))
@@ -3056,15 +3098,15 @@ def open_device_manager():
                 n += 1
             elif dev.last_error is not None and is_permission_error(dev.last_error):
                 asked = True
-        say(f"{n} Gerät(e) verbunden." if n else "Keine SlimeNRF-Geräte angesteckt.")
+        say(T(f"{n} Gerät(e) verbunden.", f"{n} device(s) connected.") if n else T("Keine SlimeNRF-Geräte angesteckt.", "No SlimeNRF devices plugged in."))
         render(force=True)
 
     def fetch_info(targets=None):
         targets = [d for d in (targets or devices) if d.connected]
         if not targets:
-            say("Kein Gerät verbunden.", "orange")
+            say(T("Kein Gerät verbunden.", "No device connected."), "orange")
             return
-        say("Frage Info und Akku ab…")
+        say(T("Frage Info und Akku ab…", "Querying info and battery…"))
 
         def work(dev):
             dev_details.setdefault(dev.key, {}).update(parse_info(query_device(dev, ["info"])))
@@ -3075,20 +3117,20 @@ def open_device_manager():
         def wait():
             for t in threads:
                 t.join()
-            app.after(0, lambda: (say(f"Info von {len(targets)} Gerät(en) aktualisiert."), render(force=True)))
+            app.after(0, lambda: (say(T(f"Info von {len(targets)} Gerät(en) aktualisiert.", f"Info of {len(targets)} device(s) updated.")), render(force=True)))
         threading.Thread(target=wait, daemon=True).start()
 
     def show_paired():
         dongle = next((d for d in devices if d.is_dongle and d.connected), None) \
             or next((d for d in devices if d.is_receiver and d.connected), None)
         if not dongle:
-            say("Kein Dongle verbunden.", "orange")
+            say(T("Kein Dongle verbunden.", "No dongle connected."), "orange")
             return
-        say("Frage den Dongle nach gekoppelten Trackern…")
+        say(T("Frage den Dongle nach gekoppelten Trackern…", "Asking the dongle for paired trackers…"))
 
         def work():
             lines = [l for l in query_device(dongle, ["list"]) if l and not l.startswith(">>>") and not l.startswith("[")]
-            app.after(0, lambda: show_lines("Gekoppelte Tracker", lines or ["Keine Antwort vom Dongle."]))
+            app.after(0, lambda: show_lines(T("Gekoppelte Tracker", "Paired trackers"), lines or [T("Keine Antwort vom Dongle.", "No reply from the dongle.")]))
         threading.Thread(target=work, daemon=True).start()
 
     def show_lines(title, lines):
@@ -3103,17 +3145,17 @@ def open_device_manager():
         box.configure(state="disabled")
 
     for text, cmd, tip in (
-        ("Alle angesteckten verbinden", connect_plugged, "Verbindet alle angesteckten SlimeNRF-Geräte"),
-        ("Info + Akku abrufen", lambda: fetch_info(), "Fragt bei allen verbundenen Geräten „info“ ab"),
-        ("Gekoppelte Tracker", show_paired, "Fragt den Dongle mit „list“, welche Tracker er kennt"),
+        (T("Alle angesteckten verbinden", "Connect all plugged in"), connect_plugged, T("Verbindet alle angesteckten SlimeNRF-Geräte", "Connects all plugged-in SlimeNRF devices")),
+        (T("Info + Akku abrufen", "Get info + battery"), lambda: fetch_info(), T("Fragt bei allen verbundenen Geräten „info“ ab", "Sends “info” to all connected devices")),
+        (T("Gekoppelte Tracker", "Paired trackers"), show_paired, T("Fragt den Dongle mit „list“, welche Tracker er kennt", "Asks the dongle with “list” which trackers it knows")),
     ):
         b = ctk.CTkButton(bar, text=text, command=cmd)
         b.pack(side="left", padx=4)
         ToolTip(b, tip)
-    b = ctk.CTkButton(bar, text="🔗 Alle koppeln", command=pair_all, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
+    b = ctk.CTkButton(bar, text=T("🔗 Alle koppeln", "🔗 Pair all"), command=pair_all, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
                       text_color="white")
     b.pack(side="right", padx=4)
-    ToolTip(b, "Dongle und alle verbundenen Tracker gleichzeitig in den Kopplungsmodus")
+    ToolTip(b, T("Dongle und alle verbundenen Tracker gleichzeitig in den Kopplungsmodus", "Put the dongle and all connected trackers into pairing mode at once"))
 
     def render(force=False):
         sig = tuple((d.key, d.connected, device_name(d), d.is_dongle, d.port) for d in devices) + \
@@ -3124,8 +3166,8 @@ def open_device_manager():
         for w in listbox.winfo_children():
             w.destroy()
         if not devices:
-            ctk.CTkLabel(listbox, text="Noch keine Geräte. Stecke Dongle oder Tracker an und drücke "
-                                       "„Alle angesteckten verbinden“.", text_color=FW_DIM).pack(pady=30)
+            ctk.CTkLabel(listbox, text=T("Noch keine Geräte. Stecke Dongle oder Tracker an und drücke "
+                                       "„Alle angesteckten verbinden“.", "No devices yet. Plug in a dongle or tracker and press “Connect all plugged in”."), text_color=FW_DIM).pack(pady=30)
             return
         for dev in sorted(devices, key=lambda d: (not d.is_dongle, not d.is_receiver, d.number)):
             card = ctk.CTkFrame(listbox, fg_color=FW_CARD, corner_radius=10)
@@ -3137,16 +3179,16 @@ def open_device_manager():
             ctk.CTkLabel(top, text=f" {kind} ", corner_radius=6, height=20, text_color="white",
                          fg_color=FW_PURPLE if dev.is_receiver else FW_SLATE,
                          font=ctk.CTkFont(size=11)).pack(side="left", padx=8)
-            ctk.CTkLabel(top, text="● verbunden" if dev.connected else "○ getrennt",
+            ctk.CTkLabel(top, text=T("● verbunden", "● connected") if dev.connected else T("○ getrennt", "○ disconnected"),
                          text_color="green" if dev.connected else "gray55").pack(side="left", padx=4)
 
             d = dev_details.get(dev.key, {})
-            facts = [f"Port: {dev.port}", f"Seriennummer: {dev.serial_number or '–'}"]
-            for key, label in (("fw", "Firmware"), ("board", "Board"), ("imu", "Sensor"), ("battery", "Akku")):
+            facts = [f"Port: {dev.port}", T(f"Seriennummer: {dev.serial_number or '–'}", f"Serial number: {dev.serial_number or '–'}")]
+            for key, label in (("fw", "Firmware"), ("board", "Board"), ("imu", "Sensor"), ("battery", T("Akku", "Battery"))):
                 if d.get(key):
                     facts.append(f"{label}: {d[key]}")
-            if "paired" in d and not dev.is_receiver:
-                facts.append("gekoppelt" if d["paired"] != "None" else "nicht gekoppelt")
+            if T("gekoppelt", "paired") in d and not dev.is_receiver:
+                facts.append(T("gekoppelt", "paired") if d[T("gekoppelt", "paired")] != "None" else T("nicht gekoppelt", "not paired"))
             ctk.CTkLabel(card, text="   ·   ".join(facts), text_color=FW_DIM, anchor="w", justify="left",
                          wraplength=900).pack(fill="x", padx=12, pady=(2, 6))
 
@@ -3155,16 +3197,17 @@ def open_device_manager():
             stand = ctk.CTkFrame(card, fg_color="transparent")
             stand.pack(fill="x", padx=12, pady=(0, 6))
             if not fl:
-                ctk.CTkLabel(stand, text="Firmware-Stand unbekannt – nach dem ersten Flashen über das DIY "
-                                         "Firmware-Tool merkt sich die App ihn", text_color=FW_DIM).pack(side="left")
+                ctk.CTkLabel(stand, text=T("Firmware-Stand unbekannt – nach dem ersten Flashen über das DIY "
+                                         "Firmware-Tool merkt sich die App ihn", "Firmware state unknown – the app remembers it after the first flash with the DIY Firmware"
+                    " Tool"), text_color=FW_DIM).pack(side="left")
             else:
-                ctk.CTkLabel(stand, text=f"Geflasht: {fl['name']} vom {de_date(fl['date'])} "
-                                         f"({fl['source']}, {fl['tag']})", text_color=FW_DIM).pack(side="left")
+                ctk.CTkLabel(stand, text=T(f"Geflasht: {fl['name']} vom {de_date(fl['date'])} "
+                                         f"({fl['source']}, {fl['tag']})", f"Flashed: {fl['name']} from {de_date(fl['date'])} ({fl['source']}, {fl['tag']})"), text_color=FW_DIM).pack(side="left")
                 upd, newdate = dev_updates.get(dev.key, ("", ""))
-                text, color = {"aktuell": ("✓ aktuell", "green"),
-                               "update": (f"⬆ Update verfügbar (neu vom {de_date(newdate)})", "orange"),
-                               "weg": ("Datei gibt es in der Quelle nicht mehr", "orange"),
-                               "fehler": ("Update-Prüfung fehlgeschlagen", "red")}.get(upd, ("prüfe …", None))
+                text, color = {"aktuell": (T("✓ aktuell", "✓ up to date"), "green"),
+                               "update": (T(f"⬆ Update verfügbar (neu vom {de_date(newdate)})", f"⬆ Update available (new from {de_date(newdate)})"), "orange"),
+                               "weg": (T("Datei gibt es in der Quelle nicht mehr", "File no longer exists in the source"), "orange"),
+                               "fehler": (T("Update-Prüfung fehlgeschlagen", "Update check failed"), "red")}.get(upd, (T("prüfe …", "checking …"), None))
                 ctk.CTkLabel(stand, text=f"   {text}", text_color=color or FW_DIM).pack(side="left")
                 if upd == "update":
                     ctk.CTkButton(stand, text="Update…", width=90, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
@@ -3176,24 +3219,24 @@ def open_device_manager():
             def toggle(dev=dev):
                 if dev.connected:
                     dev.manual_off = True
-                    device_lost(dev, "Getrennt.\n")
+                    device_lost(dev, T("Getrennt.\n", "Disconnected.\n"))
                 else:
                     dev.manual_off = False
                     connect_device(dev, parent=win)
                 render(force=True)
             buttons = [
-                ("Trennen" if dev.connected else "Verbinden", toggle),
-                ("Umbenennen", lambda dev=dev: rename_device(dev)),
+                (T("Trennen", "Disconnect") if dev.connected else T("Verbinden", "Connect"), toggle),
+                (T("Umbenennen", "Rename"), lambda dev=dev: rename_device(dev)),
             ]
             if dev.is_dongle:
-                buttons.append(("Dongle aufheben", lambda: set_dongle(None)))
+                buttons.append((T("Dongle aufheben", "Unset dongle"), lambda: set_dongle(None)))
             elif dev.serial_number and dev.is_receiver:
-                buttons.append(("Als Dongle festlegen", lambda dev=dev: set_dongle(dev)))
+                buttons.append((T("Als Dongle festlegen", "Set as dongle"), lambda dev=dev: set_dongle(dev)))
             if dev.connected:
-                buttons.append(("Info abrufen", lambda dev=dev: fetch_info([dev])))
+                buttons.append((T("Info abrufen", "Get info"), lambda dev=dev: fetch_info([dev])))
                 if not dev.is_receiver:
-                    buttons.append(("Einstellungen", lambda dev=dev: open_device_settings(dev, win)))
-            buttons.append(("Entfernen", lambda dev=dev: (remove_device(dev), render(force=True))))
+                    buttons.append((T("Einstellungen", "Settings"), lambda dev=dev: open_device_settings(dev, win)))
+            buttons.append((T("Entfernen", "Remove"), lambda dev=dev: (remove_device(dev), render(force=True))))
             for text, cmd in buttons:
                 ctk.CTkButton(row, text=text, width=110, command=cmd).pack(side="left", padx=4)
 
@@ -3237,16 +3280,16 @@ def open_device_manager():
 # Einstellungen eines Trackers lesen und aendern, ohne neu zu flashen
 def open_device_settings(dev, parent):
     w = ctk.CTkToplevel(parent, fg_color=FW_BG)
-    w.title(f"Einstellungen – {device_name(dev)}")
+    w.title(T(f"Einstellungen – {device_name(dev)}", f"Settings – {device_name(dev)}"))
     w.geometry("860x700")
     w.transient(parent)
     head = ctk.CTkFrame(w, fg_color="transparent")
     head.pack(fill="x", padx=20, pady=(16, 4))
-    ctk.CTkLabel(head, text=f"Einstellungen – {device_name(dev)}", font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w")
-    ctk.CTkLabel(head, text="Direkt im Tracker gespeichert, ohne neu zu flashen", text_color=FW_DIM).pack(anchor="w")
+    ctk.CTkLabel(head, text=T(f"Einstellungen – {device_name(dev)}", f"Settings – {device_name(dev)}"), font=ctk.CTkFont(size=20, weight="bold")).pack(anchor="w")
+    ctk.CTkLabel(head, text=T("Direkt im Tracker gespeichert, ohne neu zu flashen", "Saved directly in the tracker, without reflashing"), text_color=FW_DIM).pack(anchor="w")
     body = ctk.CTkScrollableFrame(w, fg_color="transparent")
     body.pack(fill="both", expand=True, padx=10, pady=4)
-    status = ctk.CTkLabel(w, text="Lese Einstellungen…", anchor="w", text_color=FW_DIM)
+    status = ctk.CTkLabel(w, text=T("Lese Einstellungen…", "Reading settings…"), anchor="w", text_color=FW_DIM)
     status.pack(fill="x", padx=20)
     bar = ctk.CTkFrame(w, fg_color="transparent")
     bar.pack(fill="x", padx=16, pady=(4, 12))
@@ -3256,7 +3299,7 @@ def open_device_settings(dev, parent):
     def read(done_msg=None):
         for c in body.winfo_children():
             c.destroy()
-        status.configure(text="Lese Einstellungen…", text_color=FW_DIM)
+        status.configure(text=T("Lese Einstellungen…", "Reading settings…"), text_color=FW_DIM)
 
         def work():
             values = {}
@@ -3276,8 +3319,9 @@ def open_device_settings(dev, parent):
         rgb = target_has_rgb(target) if target else None
         widgets.clear()
         if not values:
-            status.configure(text="Keine Antwort auf „read_config“ – diese Firmware kennt keine Einstellungen "
-                                  "oder der Tracker ist nicht verbunden.", text_color="orange")
+            status.configure(text=T("Keine Antwort auf „read_config“ – diese Firmware kennt keine Einstellungen "
+                                  "oder der Tracker ist nicht verbunden.", "No reply to “read_config” – this firmware does not support settings or the tracker is not"
+                " connected."), text_color="orange")
             return
         holder = ctk.CTkFrame(body, fg_color=FW_CARD, corner_radius=10)
         holder.pack(fill="x", padx=6, pady=4)
@@ -3301,8 +3345,8 @@ def open_device_settings(dev, parent):
                 cell = ctk.CTkFrame(holder, fg_color="transparent")
                 cell.grid(row=row, column=1, sticky="w", pady=(4, 0))
                 if kind == "bool":
-                    wdg = ctk.CTkSegmentedButton(cell, values=["An", "Aus"])
-                    wdg.set("An" if values[name] else "Aus")
+                    wdg = ctk.CTkSegmentedButton(cell, values=[T("An", "On"), T("Aus", "Off")])
+                    wdg.set(T("An", "On") if values[name] else T("Aus", "Off"))
                     wdg.pack(side="left")
                 elif kind == "enum":
                     wdg = ctk.CTkSegmentedButton(cell, values=list(factor.values()))
@@ -3322,7 +3366,7 @@ def open_device_settings(dev, parent):
 
                     def pick(wdg=wdg, sw=sw):
                         from tkinter import colorchooser
-                        c = colorchooser.askcolor(parent=w, title="LED-Farbe")
+                        c = colorchooser.askcolor(parent=w, title=T("LED-Farbe", "LED color"))
                         if c and c[0]:
                             wdg["rgb"] = [int(v) for v in c[0]]
                             sw.configure(fg_color=c[1], text=c[1])
@@ -3336,13 +3380,13 @@ def open_device_settings(dev, parent):
         if done_msg:
             status.configure(text=done_msg[0], text_color=done_msg[1])
         else:
-            status.configure(text=f"{len(values)} Einstellungen gelesen.", text_color=FW_DIM)
+            status.configure(text=T(f"{len(values)} Einstellungen gelesen.", f"{len(values)} settings read."), text_color=FW_DIM)
 
     def apply():
         cmds = []
         for name, (kind, wdg, factor) in widgets.items():
             if kind == "bool":
-                v = 1 if wdg.get() == "An" else 0
+                v = 1 if wdg.get() == T("An", "On") else 0
                 if v != current.get(name):
                     cmds.append(f"write_config {name} {v}")
             elif kind == "enum":
@@ -3355,7 +3399,7 @@ def open_device_settings(dev, parent):
                 try:
                     v = int(round(float(text) * factor))
                 except ValueError:
-                    status.configure(text=f"„{text}“ ist keine Zahl.", text_color="red")
+                    status.configure(text=T(f"„{text}“ ist keine Zahl.", f"“{text}” is not a number."), text_color="red")
                     return
                 if v != current.get(name):
                     cmds.append(f"write_config {name} {v}")
@@ -3365,20 +3409,20 @@ def open_device_settings(dev, parent):
                     if v != current.get(f"led_default_color_{ch}"):
                         cmds.append(f"write_config led_default_color_{ch} {v}")
         if not cmds:
-            status.configure(text="Nichts geändert.", text_color=FW_DIM)
+            status.configure(text=T("Nichts geändert.", "Nothing changed."), text_color=FW_DIM)
             return
-        status.configure(text=f"Schreibe {len(cmds)} Einstellung(en)…", text_color=FW_DIM)
+        status.configure(text=T(f"Schreibe {len(cmds)} Einstellung(en)…", f"Writing {len(cmds)} setting(s)…"), text_color=FW_DIM)
 
         def work():
             lines = query_device(dev, cmds, wait=1.5)
             ok = sum(1 for l in lines if "Updated config" in l)
             color = "green" if ok == len(cmds) else "orange"
-            app.after(0, lambda: read((f"{ok} von {len(cmds)} Einstellung(en) übernommen.", color)))
+            app.after(0, lambda: read((T(f"{ok} von {len(cmds)} Einstellung(en) übernommen.", f"{ok} of {len(cmds)} setting(s) applied."), color)))
         threading.Thread(target=work, daemon=True).start()
 
     def reset_all():
         from tkinter import messagebox
-        if not messagebox.askyesno("Zurücksetzen", "Alle Einstellungen dieses Trackers auf Standard zurücksetzen?", parent=w):
+        if not messagebox.askyesno(T("Zurücksetzen", "Reset"), T("Alle Einstellungen dieses Trackers auf Standard zurücksetzen?", "Reset all settings of this tracker to default?"), parent=w):
             return
 
         def work():
@@ -3386,14 +3430,14 @@ def open_device_settings(dev, parent):
             app.after(0, read)
         threading.Thread(target=work, daemon=True).start()
 
-    ctk.CTkButton(bar, text="Neu einlesen", command=read).pack(side="left", padx=4)
-    ctk.CTkButton(bar, text="Alle auf Standard", command=reset_all).pack(side="left", padx=4)
-    ctk.CTkButton(bar, text="Übernehmen", width=160, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
+    ctk.CTkButton(bar, text=T("Neu einlesen", "Reload"), command=read).pack(side="left", padx=4)
+    ctk.CTkButton(bar, text=T("Alle auf Standard", "All to default"), command=reset_all).pack(side="left", padx=4)
+    ctk.CTkButton(bar, text=T("Übernehmen", "Apply"), width=160, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
                   text_color="white", command=apply).pack(side="right", padx=4)
     if dev.connected:
         read()
     else:
-        status.configure(text="Tracker ist nicht verbunden.", text_color="orange")
+        status.configure(text=T("Tracker ist nicht verbunden.", "Tracker is not connected."), text_color="orange")
 
 # Buttons!
 def start_firmware_download():
@@ -3403,19 +3447,31 @@ btn_download_fw = ctk.CTkButton(top_frame, text="⬇ Firmware", width=80, comman
 btn_download_fw.pack(side="left", padx=5)
 ToolTip(btn_download_fw, "Upgrade your firmware!")
 
-btn_multi_fw = ctk.CTkButton(header_buttons, text="DIY Firmware-Tool", width=80, command=open_multiflash_window,
+btn_multi_fw = ctk.CTkButton(header_buttons, text=T("DIY Firmware-Tool", "DIY Firmware Tool"), width=80, command=open_multiflash_window,
                              fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
 btn_multi_fw.pack(side="left", padx=5)
-ToolTip(btn_multi_fw, "Tracker konfigurieren und auf einmal flashen")
+ToolTip(btn_multi_fw, T("Tracker konfigurieren und auf einmal flashen", "Configure trackers and flash them all at once"))
 
-btn_devmgr = ctk.CTkButton(header_buttons, text="Geräteverwaltung", width=80, command=open_device_manager)
+btn_devmgr = ctk.CTkButton(header_buttons, text=T("Geräteverwaltung", "Device Manager"), width=80, command=open_device_manager)
 btn_devmgr.pack(side="left", padx=(5, 0))
-ToolTip(btn_devmgr, "Alle Geräte, Akku, Firmware und Einstellungen")
+ToolTip(btn_devmgr, T("Alle Geräte, Akku, Firmware und Einstellungen", "All devices, battery, firmware and settings"))
 
-status_label = ctk.CTkLabel(top_frame, text="Not connected", text_color="red")
+status_label = ctk.CTkLabel(top_frame, text=T("Nicht verbunden", "Not connected"), text_color="red")
 status_label.pack(side="left", padx=10)
 
-tab_view = ctk.CTkTabview(app, width=580, height=130, corner_radius=10, anchor="w")
+def on_tab_change():
+    # In den Einstellungen braucht es kein Terminal: die Einstellungen bekommen den ganzen Platz
+    if tab_view.get() == TAB_SETTINGS:
+        console_row.pack_forget()
+        entry_frame.pack_forget()
+        tab_view.pack_configure(fill="both", expand=True)
+    else:
+        tab_view.pack_configure(fill="x", expand=False)
+        entry_frame.pack(side="bottom", pady=5, padx=10, fill="x")
+        console_row.pack(pady=(0, 5), padx=10, fill="both", expand=True)
+
+TAB_SETTINGS = T("Einstellungen", "Settings")
+tab_view = ctk.CTkTabview(app, width=580, height=130, corner_radius=10, anchor="w", command=on_tab_change)
 tab_view.pack(pady=10, padx=10, fill="x")
 
 
@@ -3439,40 +3495,40 @@ tracker_tab = tab_view.add("Tracker")
 tracker_btn_frame = ctk.CTkFrame(tracker_tab)
 tracker_btn_frame.pack(pady=10, padx=10)
 
-ui_btn(tracker_btn_frame, "Info", lambda: send_command("info"), "Get device information").grid(row=0, column=0, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Reboot", lambda: send_command("reboot"), "Soft reset the device").grid(row=0, column=1, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Scan", lambda: send_command("scan"), "Restart sensor scan").grid(row=0, column=2, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Calibrate", lambda: send_command("calibrate"), "Calibrate sensor ZRO").grid(row=0, column=3, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Calibrate 6 Sides", lambda: send_command("6-side"), "Calibrate 6-side accelerometer").grid(row=0, column=4, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Mag Clear", lambda: send_command("mag"), "Clear magnetometer calibration").grid(row=0, column=5, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Battery", lambda: send_command("battery"), "Get battery information").grid(row=0, column=6, padx=5, pady=5)
+ui_btn(tracker_btn_frame, "Info", lambda: send_command("info"), T("Geräteinformationen abrufen", "Get device information")).grid(row=0, column=0, padx=5, pady=5)
+ui_btn(tracker_btn_frame, T("Neustart", "Reboot"), lambda: send_command("reboot"), T("Gerät neu starten", "Soft reset the device")).grid(row=0, column=1, padx=5, pady=5)
+ui_btn(tracker_btn_frame, "Scan", lambda: send_command("scan"), T("Sensor neu suchen", "Restart sensor scan")).grid(row=0, column=2, padx=5, pady=5)
+ui_btn(tracker_btn_frame, T("Kalibrieren", "Calibrate"), lambda: send_command("calibrate"), T("Sensor kalibrieren (ZRO)", "Calibrate sensor ZRO")).grid(row=0, column=3, padx=5, pady=5)
+ui_btn(tracker_btn_frame, T("6 Seiten kalibrieren", "Calibrate 6 Sides"), lambda: send_command("6-side"), T("Beschleunigungssensor auf 6 Seiten kalibrieren", "Calibrate 6-side accelerometer")).grid(row=0, column=4, padx=5, pady=5)
+ui_btn(tracker_btn_frame, T("Mag löschen", "Mag Clear"), lambda: send_command("mag"), T("Magnetometer-Kalibrierung löschen", "Clear magnetometer calibration")).grid(row=0, column=5, padx=5, pady=5)
+ui_btn(tracker_btn_frame, T("Akku", "Battery"), lambda: send_command("battery"), T("Akku-Informationen abrufen", "Get battery information")).grid(row=0, column=6, padx=5, pady=5)
 
-ui_btn(tracker_btn_frame, "Pairing Mode", lambda: send_command("pair"), "Enter pairing mode").grid(row=1, column=0, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Clear Con. Data", lambda: send_command("clear"), "Clear pairing data").grid(row=1, column=1, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "DFU", lambda: send_command("dfu"), "Enter DFU bootloader (if available)").grid(row=1, column=2, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Uptime", lambda: send_command("uptime"), "Get device uptime").grid(row=1, column=3, padx=5, pady=5)
-ui_btn(tracker_btn_frame, "Debug", lambda: send_command("debug"), "Print debug log").grid(row=1, column=4, padx=5, pady=5)
+ui_btn(tracker_btn_frame, T("Kopplungsmodus", "Pairing Mode"), lambda: send_command("pair"), T("Kopplungsmodus starten", "Enter pairing mode")).grid(row=1, column=0, padx=5, pady=5)
+ui_btn(tracker_btn_frame, T("Kopplung löschen", "Clear Con. Data"), lambda: send_command("clear"), T("Kopplungsdaten löschen", "Clear pairing data")).grid(row=1, column=1, padx=5, pady=5)
+ui_btn(tracker_btn_frame, "DFU", lambda: send_command("dfu"), T("DFU-Bootloader starten (falls vorhanden)", "Enter DFU bootloader (if available)")).grid(row=1, column=2, padx=5, pady=5)
+ui_btn(tracker_btn_frame, T("Laufzeit", "Uptime"), lambda: send_command("uptime"), T("Laufzeit des Geräts abrufen", "Get device uptime")).grid(row=1, column=3, padx=5, pady=5)
+ui_btn(tracker_btn_frame, "Debug", lambda: send_command("debug"), T("Debug-Protokoll ausgeben", "Print debug log")).grid(row=1, column=4, padx=5, pady=5)
 ui_btn(tracker_btn_frame, "Meow!", lambda: send_command("meow"), "Meow!").grid(row=1, column=5, padx=5, pady=5)
 
 # Receiver tab
-receiver_tab = tab_view.add("Receiver")
+receiver_tab = tab_view.add(T("Empfänger", "Receiver"))
 receiver_btn_frame = ctk.CTkFrame(receiver_tab)
 receiver_btn_frame.pack(pady=10, padx=10)
 
-ui_btn(receiver_btn_frame, "Info", lambda: send_command("info"), "Get device information").grid(row=0, column=0, padx=5, pady=5)
-ui_btn(receiver_btn_frame, "List", lambda: send_command("list"), "Get paired devices").grid(row=0, column=1, padx=5, pady=5)
-ui_btn(receiver_btn_frame, "Reboot", lambda: send_command("reboot"), "Soft reset the device").grid(row=0, column=2, padx=5, pady=5)
-ui_btn(receiver_btn_frame, "Remove", lambda: send_command("remove"), "Remove last paired device").grid(row=0, column=3, padx=5, pady=5)
-ui_btn(receiver_btn_frame, "Pairing Mode", lambda: send_command("pair"), "Enter pairing mode").grid(row=0, column=4, padx=5, pady=5)
+ui_btn(receiver_btn_frame, "Info", lambda: send_command("info"), T("Geräteinformationen abrufen", "Get device information")).grid(row=0, column=0, padx=5, pady=5)
+ui_btn(receiver_btn_frame, T("Liste", "List"), lambda: send_command("list"), T("Gekoppelte Geräte abrufen", "Get paired devices")).grid(row=0, column=1, padx=5, pady=5)
+ui_btn(receiver_btn_frame, T("Neustart", "Reboot"), lambda: send_command("reboot"), T("Gerät neu starten", "Soft reset the device")).grid(row=0, column=2, padx=5, pady=5)
+ui_btn(receiver_btn_frame, T("Entfernen", "Remove"), lambda: send_command("remove"), T("Zuletzt gekoppeltes Gerät entfernen", "Remove last paired device")).grid(row=0, column=3, padx=5, pady=5)
+ui_btn(receiver_btn_frame, T("Kopplungsmodus", "Pairing Mode"), lambda: send_command("pair"), T("Kopplungsmodus starten", "Enter pairing mode")).grid(row=0, column=4, padx=5, pady=5)
 
-ui_btn(receiver_btn_frame, "✖ Saved Devices", lambda: send_command("clear"), "Clear stored devices").grid(row=1, column=0, padx=5, pady=5)
-ui_btn(receiver_btn_frame, "DFU", lambda: send_command("dfu"), "Enter DFU bootloader (if available)").grid(row=1, column=1, padx=5, pady=5)
-ui_btn(receiver_btn_frame, "Uptime", lambda: send_command("uptime"), "Get device uptime").grid(row=1, column=2, padx=5, pady=5)
+ui_btn(receiver_btn_frame, T("✖ Gespeicherte Geräte", "✖ Saved Devices"), lambda: send_command("clear"), T("Gespeicherte Geräte löschen", "Clear stored devices")).grid(row=1, column=0, padx=5, pady=5)
+ui_btn(receiver_btn_frame, "DFU", lambda: send_command("dfu"), T("DFU-Bootloader starten (falls vorhanden)", "Enter DFU bootloader (if available)")).grid(row=1, column=1, padx=5, pady=5)
+ui_btn(receiver_btn_frame, T("Laufzeit", "Uptime"), lambda: send_command("uptime"), T("Laufzeit des Geräts abrufen", "Get device uptime")).grid(row=1, column=2, padx=5, pady=5)
 ui_btn(receiver_btn_frame, "Meow!", lambda: send_command("meow"), "Meow!").grid(row=1, column=3, padx=5, pady=5)
-ui_btn(receiver_btn_frame, "⎋ Pairing Mode", lambda: send_command("exit"), "Exit pairing mode").grid(row=1, column=4, padx=5, pady=5)
+ui_btn(receiver_btn_frame, T("⎋ Kopplungsmodus", "⎋ Pairing Mode"), lambda: send_command("exit"), T("Kopplungsmodus beenden", "Exit pairing mode")).grid(row=1, column=4, padx=5, pady=5)
 
 # Settings tab
-settings_tab = tab_view.add("Settings")
+settings_tab = tab_view.add(TAB_SETTINGS)
 settings_frame = ctk.CTkFrame(settings_tab)
 settings_frame.pack(padx=10, pady=10, fill="both", expand=True)
 settings_frame.grid_columnconfigure(0, weight=1)
@@ -3489,7 +3545,7 @@ elif platform_name == "Linux":
 
 version_label = ctk.CTkLabel(
     settings_frame,
-    text=f"SmolSlimeConfigurator Version 9 · Fassung v{APP_VERSION} ({platform_name})",
+    text=T(f"SmolSlimeConfigurator Version 9 · Fassung v{APP_VERSION} ({platform_name})", f"SmolSlimeConfigurator Version 9 · build v{APP_VERSION} ({platform_name})"),
     text_color="gray"
 )
 version_label.pack(anchor="ne", padx=10, pady=5)
@@ -3499,7 +3555,7 @@ firmware_frame.pack(pady=10, fill="x")
 
 ctk.CTkLabel(
     firmware_frame,
-    text="Firmware Source:",
+    text=T("Firmware-Quelle:", "Firmware Source:"),
     font=ctk.CTkFont(weight="bold")
 ).pack(anchor="w", padx=5, pady=(0, 5))
 
@@ -3520,7 +3576,7 @@ rb_main = ctk.CTkRadioButton(
     command=on_firmware_source_change
 )
 rb_main.pack(anchor="w", padx=10)
-ToolTip(rb_main, "Main firmware repo")
+ToolTip(rb_main, T("Haupt-Firmware-Quelle", "Main firmware repo"))
 
 rb_kouno = ctk.CTkRadioButton(
     firmware_frame,
@@ -3530,17 +3586,17 @@ rb_kouno = ctk.CTkRadioButton(
     command=on_firmware_source_change
 )
 rb_kouno.pack(anchor="w", padx=10)
-ToolTip(rb_kouno, "Backup firmware option")
+ToolTip(rb_kouno, T("Ausweich-Firmware-Quelle", "Backup firmware option"))
 
 rb_custom = ctk.CTkRadioButton(
     firmware_frame,
-    text="Custom Repo",
+    text=T("Eigene Quelle", "Custom Repo"),
     variable=firmware_source_var,
     value="custom",
     command=on_firmware_source_change
 )
 rb_custom.pack(anchor="w", padx=10)
-ToolTip(rb_custom, "Custom firmware repo")
+ToolTip(rb_custom, T("Eigene Firmware-Quelle", "Custom firmware repo"))
 
 custom_repo_entry = ctk.CTkEntry(
     firmware_frame,
@@ -3554,7 +3610,7 @@ def save_custom_repo(*args):
     save_settings()
 
 custom_repo_entry.bind("<FocusOut>", save_custom_repo)
-ToolTip(custom_repo_entry, "Custom firmware repo")
+ToolTip(custom_repo_entry, T("Eigene Firmware-Quelle", "Custom firmware repo"))
 
 def toggle_theme(choice):
     settings["theme"] = choice
@@ -3565,17 +3621,27 @@ def toggle_theme(choice):
 
     save_settings()
 
-def toggle_accent(choice):
-    settings["accent"] = choice
-    apply_accent(choice)
+def change_language(choice):
+    lang = "de" if choice == "Deutsch" else "en"
+    if lang == LANG:
+        return
+    settings["lang"] = lang
     save_settings()
+    from tkinter import messagebox
+    if messagebox.askyesno(T("Sprache", "Language"),
+                           "Restart now to switch the language?\nJetzt neu starten, um die Sprache umzustellen?"):
+        restart_app()
+    else:
+        lang_menu.set("Deutsch" if LANG == "de" else "English")
+        settings["lang"] = LANG
+        save_settings()
 
 def toggle_tooltips():
     global TOOLTIPS_ENABLED
     settings["tooltips"] = not settings["tooltips"]
     TOOLTIPS_ENABLED = settings["tooltips"]
     save_settings()
-    append_text(f"Tooltips {'enabled' if TOOLTIPS_ENABLED else 'disabled'}.\n", "success")
+    append_text(T(f"Tooltips {'an' if TOOLTIPS_ENABLED else 'aus'}.\n", f"Tooltips {'enabled' if TOOLTIPS_ENABLED else 'disabled'}.\n"), "success")
 
 def open_repo():
     webbrowser.open("https://github.com/ICantMakeThings/SmolSlimeConfigurator")
@@ -3583,27 +3649,27 @@ def open_repo():
 appearance_frame = ctk.CTkFrame(settings_frame)
 appearance_frame.pack(pady=10, fill="x")
 
-ctk.CTkLabel(appearance_frame, text="Appearance Mode:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+ctk.CTkLabel(appearance_frame, text=T("Darstellung:", "Appearance Mode:")).grid(row=0, column=0, padx=5, pady=5, sticky="w")
 theme_menu = ctk.CTkOptionMenu(appearance_frame, values=["light", "dark"], command=toggle_theme)
 theme_menu.set(settings["theme"])
 theme_menu.grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
-ctk.CTkLabel(appearance_frame, text="Accent Colour:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
-accent_menu = ctk.CTkOptionMenu(appearance_frame, values=["slimevr", "blue", "green", "dark-blue"], command=toggle_accent)
-accent_menu.set(settings["accent"])
-accent_menu.grid(row=1, column=1, padx=5, pady=5, sticky="w")
-ToolTip(accent_menu, "Requires app restart")
+ctk.CTkLabel(appearance_frame, text=T("Sprache:", "Language:")).grid(row=1, column=0, padx=5, pady=5, sticky="w")
+lang_menu = ctk.CTkOptionMenu(appearance_frame, values=["English", "Deutsch"], command=change_language)
+lang_menu.set("Deutsch" if LANG == "de" else "English")
+lang_menu.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+ToolTip(lang_menu, T("Die App startet dafür neu", "The app restarts to apply it"))
 
 # Buttonssss
 button_row = ctk.CTkFrame(settings_frame)
 button_row.pack(pady=15)
 
-tooltips_button = ctk.CTkButton(button_row, text="Toggle Tooltips", command=toggle_tooltips)
+tooltips_button = ctk.CTkButton(button_row, text=T("Tooltips an/aus", "Toggle Tooltips"), command=toggle_tooltips)
 tooltips_button.pack(side="left", padx=10)
-ToolTip(tooltips_button, "Yk what each button does? Turn off tooltips!")
+ToolTip(tooltips_button, T("Du weißt, was jeder Knopf macht? Tooltips ausschalten!", "Yk what each button does? Turn off tooltips!"))
 
 
-repo_button = ctk.CTkButton(button_row, text="Open GitHub Repo", command=open_repo)
+repo_button = ctk.CTkButton(button_row, text=T("GitHub-Repo öffnen", "Open GitHub Repo"), command=open_repo)
 repo_button.pack(side="left", padx=10)
 
 ToolTip(repo_button, "github.com/ICantMakeThings/SmolSlimeConfigurator")
@@ -3625,11 +3691,11 @@ def ver_tuple(v):
 
 def show_check_result(text):
     update_button.configure(text=text)
-    app.after(4000, lambda: update_button.configure(text="Nach Updates suchen", state="normal"))
+    app.after(4000, lambda: update_button.configure(text=T("Nach Updates suchen", "Check for updates"), state="normal"))
 
 def check_for_update(manual=False):
     if manual:
-        update_button.configure(text="Suche…", state="disabled")
+        update_button.configure(text=T("Suche…", "Checking…"), state="disabled")
 
     def work():
         try:
@@ -3639,7 +3705,7 @@ def check_for_update(manual=False):
                                     allow_redirects=False, timeout=10)
             tag = response.headers.get("Location", "").rstrip("/").rsplit("/", 1)[-1]
             if response.status_code not in (301, 302) or not ver_tuple(tag):
-                raise RuntimeError(f"keine Antwort von GitHub (HTTP {response.status_code})")
+                raise RuntimeError(T(f"keine Antwort von GitHub (HTTP {response.status_code})", f"no answer from GitHub (HTTP {response.status_code})"))
             asset = {"browser_download_url": f"https://github.com/{UPDATE_REPO}/releases/download/{tag}/{UPDATE_ASSET}"}
             if ver_tuple(tag) > ver_tuple(APP_VERSION):
                 notes = ""
@@ -3651,20 +3717,20 @@ def check_for_update(manual=False):
                     pass
                 app.after(0, lambda: offer_update(tag, asset, notes))
                 if manual:
-                    app.after(0, lambda: show_check_result(f"Neu: {tag}"))
+                    app.after(0, lambda: show_check_result(T(f"Neu: {tag}", f"New: {tag}")))
             elif manual:
-                app.after(0, lambda: show_check_result(f"✓ v{APP_VERSION} ist aktuell"))
+                app.after(0, lambda: show_check_result(T(f"✓ v{APP_VERSION} ist aktuell", f"✓ v{APP_VERSION} is up to date")))
         except Exception as e:
             if manual:
-                app.after(0, lambda e=e: (append_text(f"Update-Prüfung fehlgeschlagen: {e}\n", "error"),
-                                          show_check_result("Prüfung fehlgeschlagen")))
+                app.after(0, lambda e=e: (append_text(T(f"Update-Prüfung fehlgeschlagen: {e}\n", f"Update check failed: {e}\n"), "error"),
+                                          show_check_result(T("Prüfung fehlgeschlagen", "Check failed"))))
     threading.Thread(target=work, daemon=True).start()
 
 def offer_update(tag, asset, notes):
     update_info.update(tag=tag, asset=asset, notes=notes)
     btn_update.configure(text=f"⬆ Update {tag}", state="normal")
     btn_update.pack(side="left", padx=5, before=btn_multi_fw)
-    append_text(f"Update verfügbar: {tag} (installiert: v{APP_VERSION}).\n", "success")
+    append_text(T(f"Update verfügbar: {tag} (installiert: v{APP_VERSION}).\n", f"Update available: {tag} (installed: v{APP_VERSION}).\n"), "success")
 
 def install_update():
     from tkinter import messagebox
@@ -3673,10 +3739,10 @@ def install_update():
         webbrowser.open(f"https://github.com/{UPDATE_REPO}/releases/latest")
         return
     notes = update_info.get("notes", "").strip()
-    if not messagebox.askyesno("Update", f"Auf {tag} aktualisieren?\n\n{notes[:800]}\n\nDas Programm startet danach neu.",
+    if not messagebox.askyesno("Update", T(f"Auf {tag} aktualisieren?\n\n{notes[:800]}\n\nDas Programm startet danach neu.", f"Update to {tag}?\n\n{notes[:800]}\n\nThe program restarts afterwards."),
                                parent=app):
         return
-    btn_update.configure(state="disabled", text="Lade Update…")
+    btn_update.configure(state="disabled", text=T("Lade Update…", "Downloading update…"))
     exe = sys.executable
 
     def work():
@@ -3688,7 +3754,7 @@ def install_update():
                 shutil.copyfileobj(response.raw, f)
             expected = int(response.headers.get("Content-Length") or 0)
             if os.path.getsize(new) < 1_000_000 or (expected and os.path.getsize(new) != expected):
-                raise RuntimeError("Download unvollständig")
+                raise RuntimeError(T("Download unvollständig", "Download incomplete"))
             os.chmod(new, 0o755)
             if sys.platform.startswith("win"):
                 # Windows sperrt die laufende .exe gegen Ueberschreiben, Umbenennen geht aber
@@ -3698,7 +3764,7 @@ def install_update():
                 os.rename(exe, old)
             os.replace(new, exe)  # Linux erlaubt das Ersetzen der laufenden Datei direkt
         except Exception as e:
-            app.after(0, lambda e=e: (append_text(f"Update fehlgeschlagen: {e}\n", "error"),
+            app.after(0, lambda e=e: (append_text(T(f"Update fehlgeschlagen: {e}\n", f"Update failed: {e}\n"), "error"),
                                       btn_update.configure(state="normal", text=f"⬆ Update {tag}")))
             return
         app.after(0, restart_app)
@@ -3715,17 +3781,20 @@ def restart_app():
         env["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH_ORIG"]
     else:
         env.pop("LD_LIBRARY_PATH", None)
-    subprocess.Popen([sys.executable], cwd=os.path.dirname(sys.executable), env=env, start_new_session=True)
+    if getattr(sys, "frozen", False):
+        subprocess.Popen([sys.executable], cwd=os.path.dirname(sys.executable), env=env, start_new_session=True)
+    else:   # als Skript gestartet: Python mit demselben Skript neu
+        subprocess.Popen([sys.executable] + sys.argv, start_new_session=True)
     app.destroy()
     os._exit(0)
 
 btn_update = ctk.CTkButton(header_buttons, text="⬆ Update", width=80, fg_color="green", hover_color="#006400",
                            command=install_update)
-ToolTip(btn_update, "Neue Fassung herunterladen und neu starten")
+ToolTip(btn_update, T("Neue Fassung herunterladen und neu starten", "Download the new build and restart"))
 
-update_button = ctk.CTkButton(button_row, text="Nach Updates suchen", command=lambda: check_for_update(manual=True))
+update_button = ctk.CTkButton(button_row, text=T("Nach Updates suchen", "Check for updates"), command=lambda: check_for_update(manual=True))
 update_button.pack(side="left", padx=10)
-ToolTip(update_button, f"Installiert: v{APP_VERSION}")
+ToolTip(update_button, T(f"Installiert: v{APP_VERSION}", f"Installed: v{APP_VERSION}"))
 app.after(3000, check_for_update)
 
 
@@ -3734,12 +3803,12 @@ console_row = ctk.CTkFrame(app, fg_color="transparent")
 
 sidebar = ctk.CTkFrame(console_row, width=130)
 sidebar.pack(side="left", fill="y", padx=(0, 5))
-btn_pair_all = ctk.CTkButton(sidebar, text="🔗 Koppeln", width=110, command=pair_all,
+btn_pair_all = ctk.CTkButton(sidebar, text=T("🔗 Koppeln", "🔗 Pair"), width=110, command=pair_all,
                              fg_color=SV_PURPLE, hover_color=SV_PURPLE_H, text_color="white")
 btn_pair_all.pack(side="bottom", fill="x", padx=5, pady=5)
 device_list = ctk.CTkScrollableFrame(sidebar, width=110, fg_color="transparent")
 device_list.pack(fill="both", expand=True, padx=2, pady=(2, 0))
-ToolTip(btn_pair_all, "Dongle und alle verbundenen Tracker gleichzeitig in den Kopplungsmodus")
+ToolTip(btn_pair_all, T("Dongle und alle verbundenen Tracker gleichzeitig in den Kopplungsmodus", "Put the dongle and all connected trackers into pairing mode at once"))
 
 console_area = ctk.CTkFrame(console_row, fg_color="transparent")
 console_area.pack(side="left", fill="both", expand=True)
@@ -3757,10 +3826,10 @@ def send_custom_command():
 entry_frame = ctk.CTkFrame(app)
 entry_frame.pack(side="bottom", pady=5, padx=10, fill="x")
 
-command_entry = ctk.CTkEntry(entry_frame, placeholder_text="Enter custom command...")
+command_entry = ctk.CTkEntry(entry_frame, placeholder_text=T("Eigenen Befehl eingeben...", "Enter custom command..."))
 command_entry.pack(side="left", fill="x", expand=True, padx=(0, 5), pady=5)
 
-btn_send = ctk.CTkButton(entry_frame, text="Send", width=80, command=send_custom_command)
+btn_send = ctk.CTkButton(entry_frame, text=T("Senden", "Send"), width=80, command=send_custom_command)
 btn_send.pack(side="left", pady=5)
 
 btn_clear = ctk.CTkButton(entry_frame, text="X", width=30, command=lambda: console.configure(state="normal") or console.delete("1.0", "end") or console.configure(state="disabled"))
@@ -3768,7 +3837,7 @@ btn_clear.pack(side="left", padx=(5,0), pady=5)
 
 # Erst nach der Eingabezeile packen, damit die nicht abgeschnitten wird
 console_row.pack(pady=(0, 5), padx=10, fill="both", expand=True)
-ToolTip(btn_clear, "Clear")
+ToolTip(btn_clear, T("Leeren", "Clear"))
 
 command_entry.bind("<Return>", lambda event: send_custom_command())
 
