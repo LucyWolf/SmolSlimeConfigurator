@@ -64,10 +64,27 @@ jobs:
           $p = Start-Process -FilePath "dist\SmolSlimeConfigurator-Windows.exe" -PassThru
           if (-not $p.WaitForExit(60000)) { $p.Kill(); throw "Selbsttest: haengt" }
           if ($p.ExitCode -ne 0) { throw "Selbsttest: Exitcode $($p.ExitCode)" }
+      - name: Setup bauen
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $ver = "${{ inputs.tag }}".TrimStart("v")
+          iscc "/DMyAppVersion=$ver" windows\smolslime-setup.iss
+      - name: Setup pruefen (still installieren und wieder entfernen)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\smolslime-setup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -PassThru -Wait
+          if ($p.ExitCode -ne 0) { throw "Setup: Exitcode $($p.ExitCode)" }
+          $exe = "$env:LOCALAPPDATA\Programs\SmolSlime Configurator\SmolSlimeConfigurator.exe"
+          if (-not (Test-Path $exe)) { throw "Setup: $exe fehlt" }
+          $u = Start-Process -FilePath "$env:LOCALAPPDATA\Programs\SmolSlime Configurator\unins000.exe" -ArgumentList "/VERYSILENT" -PassThru -Wait
+          if ($u.ExitCode -ne 0) { throw "Deinstallation: Exitcode $($u.ExitCode)" }
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: dist/SmolSlimeConfigurator-Windows.exe
+          path: |
+            dist/SmolSlimeConfigurator-Windows.exe
+            dist/smolslime-setup.exe
 
   publish:
     needs: [linux, windows]
