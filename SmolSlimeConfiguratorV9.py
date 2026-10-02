@@ -39,7 +39,7 @@ custom_fw_path = None
 
 # Version dieser Fassung. Die letzte Stelle zaehlt bis 99 (1.0.9 -> 1.0.10),
 # nie rueckwaerts: der Updater vergleicht sie mit dem neuesten GitHub-Release.
-APP_VERSION = "1.0.37"
+APP_VERSION = "1.0.38"
 UPDATE_REPO = "LucyWolf/SmolSlimeConfigurator"
 UPDATE_ASSET = "SmolSlimeConfigurator-Windows.exe" if sys.platform.startswith("win") else "SmolSlimeConfigurator-Linux"
 
@@ -323,8 +323,7 @@ def is_permission_error(e):
 def fix_serial_permissions(parent=None):
     if not sys.platform.startswith("linux") or not shutil.which("pkexec"):
         return False
-    from tkinter import messagebox
-    if not messagebox.askyesno(
+    if not ask_yes_no(
         T("Keine Berechtigung", "No permission"),
         T("Linux erlaubt den Zugriff auf den USB-Anschluss nicht.\n\n"
         "Jetzt einmalig einrichten? Danach fragt ein Fenster nach deinem Passwort.", "Linux does not allow access to the USB port.\n\nSet it up once now? A window will then ask"
@@ -1423,6 +1422,46 @@ FW_SLATE = ("#8fa1b5", "#34506b")
 FW_GREEN = "#2e9e5b"
 FW_DIM = ("gray35", "gray65")
 
+# Rueckfrage im Stil der App statt des grauen System-Dialogs von Tk. Gibt True bei "Ja" zurueck.
+def ask_yes_no(title, text, parent=None):
+    parent = parent or app
+    result = {"ok": False}
+    w = ctk.CTkToplevel(parent)
+    w.title(title)
+    w.configure(fg_color=FW_BG)
+    w.resizable(False, False)
+    w.transient(parent)
+    ctk.CTkLabel(w, text=title, font=ctk.CTkFont(size=18, weight="bold"), anchor="w").pack(
+        fill="x", padx=22, pady=(18, 6))
+    ctk.CTkLabel(w, text=text, anchor="w", justify="left", wraplength=460).pack(fill="x", padx=22)
+
+    def close(ok):
+        result["ok"] = ok
+        w.destroy()
+
+    row = ctk.CTkFrame(w, fg_color="transparent")
+    row.pack(fill="x", padx=22, pady=(18, 18))
+    ctk.CTkButton(row, text=T("Ja", "Yes"), width=110, fg_color=FW_PURPLE, hover_color=FW_PURPLE_H,
+                  text_color="white", command=lambda: close(True)).pack(side="right")
+    ctk.CTkButton(row, text=T("Abbrechen", "Cancel"), width=110, fg_color=FW_SLATE,
+                  command=lambda: close(False)).pack(side="right", padx=(0, 8))
+    w.protocol("WM_DELETE_WINDOW", lambda: close(False))
+    w.bind("<Return>", lambda e: close(True))
+    w.bind("<Escape>", lambda e: close(False))
+    # mittig ueber dem aufrufenden Fenster
+    w.update_idletasks()
+    x = parent.winfo_rootx() + max(0, (parent.winfo_width() - w.winfo_reqwidth()) // 2)
+    y = parent.winfo_rooty() + max(0, (parent.winfo_height() - w.winfo_reqheight()) // 3)
+    w.geometry(f"+{x}+{y}")
+    try:
+        w.wait_visibility()
+        w.grab_set()
+    except tk.TclError:
+        pass
+    w.focus_set()
+    parent.wait_window(w)
+    return result["ok"]
+
 fw_release_cache = {}
 
 # Erklaerungen stehen hinter einem ?-Knopf, damit die Seite uebersichtlich bleibt
@@ -2515,8 +2554,7 @@ def open_multiflash_window(role=None):
                if (r["dev"].product and board and not guess_board(r["dev"].product, [board]))
                or not role_matches(r["dev"].is_receiver)]
         if odd:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
+            if not ask_yes_no(
                     T("Passt die Firmware?", "Does the firmware fit?"),
                     T(f"Die Datei ist für „{board.replace('_', ' ')}“ "
                     f"({'Dongle' if st['role'] == 'dongle' else 'Tracker'}), aber diese Geräte melden sich anders:\n", f"The file is for “{board.replace('_', ' ')}” ({'dongle' if st['role'] == 'dongle' else 'tracker'}"
@@ -3421,8 +3459,7 @@ def open_device_settings(dev, parent):
         threading.Thread(target=work, daemon=True).start()
 
     def reset_all():
-        from tkinter import messagebox
-        if not messagebox.askyesno(T("Zurücksetzen", "Reset"), T("Alle Einstellungen dieses Trackers auf Standard zurücksetzen?", "Reset all settings of this tracker to default?"), parent=w):
+        if not ask_yes_no(T("Zurücksetzen", "Reset"), T("Alle Einstellungen dieses Trackers auf Standard zurücksetzen?", "Reset all settings of this tracker to default?"), parent=w):
             return
 
         def work():
@@ -3627,8 +3664,7 @@ def change_language(choice):
         return
     settings["lang"] = lang
     save_settings()
-    from tkinter import messagebox
-    if messagebox.askyesno(T("Sprache", "Language"),
+    if ask_yes_no(T("Sprache", "Language"),
                            "Restart now to switch the language?\nJetzt neu starten, um die Sprache umzustellen?"):
         restart_app()
     else:
@@ -3733,13 +3769,12 @@ def offer_update(tag, asset, notes):
     append_text(T(f"Update verfügbar: {tag} (installiert: v{APP_VERSION}).\n", f"Update available: {tag} (installed: v{APP_VERSION}).\n"), "success")
 
 def install_update():
-    from tkinter import messagebox
     tag, asset = update_info.get("tag"), update_info.get("asset")
     if not (getattr(sys, "frozen", False) and sys.platform.startswith(("linux", "win")) and asset):
         webbrowser.open(f"https://github.com/{UPDATE_REPO}/releases/latest")
         return
     notes = update_info.get("notes", "").strip()
-    if not messagebox.askyesno("Update", T(f"Auf {tag} aktualisieren?\n\n{notes[:800]}\n\nDas Programm startet danach neu.", f"Update to {tag}?\n\n{notes[:800]}\n\nThe program restarts afterwards."),
+    if not ask_yes_no("Update", T(f"Auf {tag} aktualisieren?\n\n{notes[:800]}\n\nDas Programm startet danach neu.", f"Update to {tag}?\n\n{notes[:800]}\n\nThe program restarts afterwards."),
                                parent=app):
         return
     btn_update.configure(state="disabled", text=T("Lade Update…", "Downloading update…"))
